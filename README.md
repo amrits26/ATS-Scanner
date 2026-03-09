@@ -5,7 +5,7 @@ Production-ready AI-powered ATS Resume Optimizer: upload resume and job descript
 ## ✨ Features
 
 - **Resume & JD upload**: PDF, DOCX; optional paste for job description
-- **Job description analyzer**: OpenAI extracts required/preferred skills, keywords, tools, experience level (strict JSON)
+- **Job description analyzer**: Google Gemini 1.5 Flash extracts required/preferred skills, keywords, tools, experience level (strict JSON)
 - **ATS optimizer**: Rewrites resume with better action verbs and keyword alignment **without fabricating experience**
 - **ATS scoring**: Keyword overlap %, TF-IDF cosine similarity, weighted final score (0–100%), missing/recommended keywords
 - **Skill Gap Analysis**: Identifies matched vs missing required and preferred skills
@@ -16,7 +16,44 @@ Production-ready AI-powered ATS Resume Optimizer: upload resume and job descript
 - **Writing Feedback**: Weak verb detection, metric detection, passive voice, readability score, section detection
 - **Professional UI**: Modern SaaS-style interface with Tailwind CSS
 
-## 📊 Architecture
+## �️ Tech Stack
+
+- **Backend**: FastAPI (Python), Pydantic for data validation
+- **Frontend**: React, TypeScript, Vite, Tailwind CSS
+- **LLM Integration**: Google Gemini 1.5 Flash via `google-generativeai`
+- **Text Processing**: pdfplumber (PDF), python-docx (DOCX)
+- **Analysis**: scikit-learn (TF-IDF, cosine similarity)
+- **Visualization**: Matplotlib (charts), NumPy
+- **Deployment-ready**: Docker-compatible, serverless-compatible
+
+## 📚 Tech Pivot: OpenAI to Gemini
+
+This project was originally built with OpenAI's GPT-4 but was refactored to use **Google Gemini 1.5 Flash** for improved cost-efficiency and broader API availability.
+
+### Refactoring Highlights:
+
+1. **Abstracted LLM Interface** - Services (`jd_analyzer`, `ats_optimizer`, `gemini_service`) use consistent async patterns independent of provider
+2. **Drop-in Replacement** - Minimal changes to response handling; Gemini returns same JSON structures
+3. **Configuration-driven** - Single `.env` change switches LLM provider (`GOOGLE_API_KEY`)
+4. **Provider-agnostic Models** - Pydantic models work with any LLM returning JSON
+5. **Error Handling** - Graceful fallbacks prevent charts/visualizations from breaking on API errors
+
+### Migration Path:
+```
+OpenAI Integration:              Gemini Integration:
+├── openai import               ├── google.generativeai import
+├── AsyncOpenAI client          ├── genai.GenerativeModel()
+├── chat.completions.create()   └── model.generate_content()
+└── OPENAI_API_KEY env var      └── GOOGLE_API_KEY env var
+```
+
+### Benefits:
+- ✅ **Cost**: Gemini 1.5 Flash significantly cheaper than GPT-4o
+- ✅ **Performance**: Fast inference times for resume processing
+- ✅ **Reliability**: Google's infrastructure + API consistency
+- ✅ **Flexibility**: Easy to swap providers with same codebase
+
+
 
 ```
 ATS Scanner/
@@ -25,8 +62,8 @@ ATS Scanner/
 │   ├── models.py                     # Pydantic models (request/response)
 │   ├── services/
 │   │   ├── resume_parser.py          # PDF/DOCX text extraction
-│   │   ├── jd_analyzer.py            # OpenAI JD → structured JSON
-│   │   ├── ats_optimizer.py          # OpenAI resume rewrite
+│   │   ├── jd_analyzer.py            # Gemini JD → structured JSON
+│   │   ├── ats_optimizer.py          # Gemini resume rewrite
 │   │   ├── scorer.py                 # Keyword + TF-IDF scoring
 │   │   ├── skill_analyzer.py         # Skill gap analysis
 │   │   ├── quality_scorer.py         # Resume quality evaluation
@@ -34,7 +71,7 @@ ATS Scanner/
 │   │   ├── doc_generator.py          # DOCX generation
 │   │   ├── visualizer.py             # Matplotlib charts
 │   │   ├── writing_feedback.py       # Writing analysis
-│   │   └── openai_service.py         # OpenAI API integration
+│   │   └── gemini_service.py         # Google Gemini API integration
 │   ├── utils/
 │   │   ├── resume_parser.py          # Shared parser utilities
 │   │   └── text_cleaner.py           # Text normalization
@@ -60,7 +97,7 @@ ATS Scanner/
 ### Prerequisites
 - Python 3.10+
 - Node.js 16+ & npm
-- OpenAI API key ([get one](https://platform.openai.com/api-keys))
+- Google Gemini API key ([get one](https://makersuite.google.com/app/apikey))
 
 ### 1. Environment Setup
 
@@ -74,10 +111,9 @@ Copy the environment template:
 cp .env.example .env
 ```
 
-Edit `.env` and add your OpenAI API key:
+Edit `.env` and add your Google Gemini API key:
 ```env
-OPENAI_API_KEY=sk-your-actual-key-here
-OPENAI_MODEL=gpt-4o-mini
+GOOGLE_API_KEY=your-gemini-api-key-here
 CHARTS_DIR=backend/charts
 ```
 
@@ -224,12 +260,11 @@ GET /api/charts/{session_id}/{filename}  # Serve chart images
 Edit `.env` to customize:
 
 ```env
-# OpenAI
-OPENAI_API_KEY=sk-...      # Your API key
-OPENAI_MODEL=gpt-4o-mini   # or gpt-4, gpt-4o
+# Google Gemini API
+GOOGLE_API_KEY=your-api-key-here   # Your Gemini API key
 
 # Paths
-CHARTS_DIR=backend/charts   # Where to save chart images
+CHARTS_DIR=backend/charts          # Where to save chart images
 ```
 
 ## 📈 How It Works
@@ -239,7 +274,7 @@ CHARTS_DIR=backend/charts   # Where to save chart images
 - Cleans and normalizes formatting
 - Preserves original content
 
-### 2. JD Analysis (OpenAI)
+### 2. JD Analysis (Google Gemini)
 - Extracts structured data:
   - Required skills
   - Preferred skills
@@ -248,7 +283,7 @@ CHARTS_DIR=backend/charts   # Where to save chart images
   - Experience level
 - Returns strict JSON format
 
-### 3. Resume Optimization (OpenAI)
+### 3. Resume Optimization (Google Gemini)
 - Rewrites resume using JD keywords
 - Improves action verbs and phrasing
 - **Does NOT fabricate** experience
@@ -308,7 +343,7 @@ To showcase this as a portfolio project:
    ```
 
 4. **README highlights**:
-   - Tech stack: FastAPI, React, Tailwind, OpenAI
+   - Tech stack: FastAPI, React, Tailwind, Google Gemini 1.5 Flash
    - 50+ lines of code per service
    - Database-free but production-ready
    - API-first architecture
@@ -352,7 +387,7 @@ Manual testing:
 
 ## 🐛 Common Issues
 
-### Issue: `OPENAI_API_KEY not found`
+### Issue: `GOOGLE_API_KEY not found`
 **Solution**: Create `.env` file with your key (copy from `.env.example`)
 
 ### Issue: `ModuleNotFoundError: No module named 'backend'`
