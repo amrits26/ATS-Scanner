@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-slate-950 text-slate-100 font-sans antialiased;
+}
+
+/* Enhanced Glassmorphism and Theming */
+@layer components {
+  /* Glass effect cards */
+  .glass-card {
+    @apply rounded-2xl border border-slate-700/50 backdrop-blur-xl bg-gradient-to-br from-slate-800/40 to-slate-900/20 shadow-lg hover:border-slate-600/70 transition-all;
+  }
+  
+  .glass-card-emerald {
+    @apply rounded-2xl border border-emerald-700/30 backdrop-blur-xl bg-gradient-to-br from-emerald-900/20 to-slate-900/20 shadow-lg hover:border-emerald-600/50 transition-all;
+  }
+
+  /* Input focus states with emerald accent */
+  .glass-input {
+    @apply rounded-lg bg-slate-800/50 border border-slate-700 text-slate-200 placeholder-slate-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all;
+  }
+
+  /* Gradient text */
+  .gradient-text {
+    @apply bg-gradient-to-r from-emerald-400 via-cyan-400 to-emerald-400 bg-clip-text text-transparent;
+  }
+
+  /* Button variants */
+  .btn-primary {
+    @apply rounded-lg bg-gradient-to-r from-emerald-600 to-cyan-600 px-6 py-3 font-semibold text-white transition-all hover:shadow-lg hover:shadow-emerald-500/30 hover:scale-105 active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply rounded-lg bg-slate-700/50 px-6 py-3 font-semibold text-slate-200 transition-all hover:bg-slate-600/50 hover:text-white border border-slate-600/50;
+  }
+}

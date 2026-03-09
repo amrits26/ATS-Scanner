@@ -1,0 +1,27 @@
+{
+    "python.analysis.exclude": [
+        "**/.venv",
+        "**/node_modules",
+        "**/__pycache__",
+        "**/dist"
+    ],
+    "python.analysis.ignore": [
+        "**/.venv",
+        "**/node_modules",
+        "**/__pycache__",
+        "**/dist"
+    ],
+    "python.analysis.indexing": true,
+    "search.exclude": {
+        "**/.venv": true,
+        "**/node_modules": true,
+        "**/__pycache__": true,
+        "**/dist": true
+    },
+    "files.exclude": {
+        "**/.venv": true,
+        "**/node_modules": true,
+        "**/__pycache__": true,
+        "**/dist": true
+    }
+}
