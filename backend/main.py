@@ -54,6 +54,7 @@ from .models import (
     FeedbackRequest,
     FeedbackResponse,
     JobDescriptionAnalysis,
+    KeywordHeatmapData,
     LiveKeywordData,
     OptimizedResumeResponse,
     WritingFeedback,
@@ -692,6 +693,14 @@ async def get_analysis_status(
 
             # Gate the result based on user tier
             if user and user.tier.value == "free":
+                # FREE tier: show only top 3 keywords as tease, lock the rest
+                free_keywords = KeywordHeatmapData()
+                if full_result.keyword_heatmap and full_result.keyword_heatmap.keywords:
+                    # Show only first 3 keywords to free users
+                    free_keywords.keywords = full_result.keyword_heatmap.keywords[:3]
+                    free_keywords.frequencies = full_result.keyword_heatmap.frequencies[:3] if full_result.keyword_heatmap.frequencies else []
+                    free_keywords.importance_scores = full_result.keyword_heatmap.importance_scores[:3] if full_result.keyword_heatmap.importance_scores else []
+                
                 # FREE tier: strip sensitive fields
                 try:
                     gated_result = ComprehensiveAnalysisResult(
@@ -701,7 +710,7 @@ async def get_analysis_status(
                         jd_analysis=JobDescriptionAnalysis(),  # Strip
                         skill_gap=None,  # Strip (gated)
                         resume_quality=None,  # Strip (gated)
-                        keyword_heatmap=None,  # Strip (gated)
+                        keyword_heatmap=free_keywords,  # Show only 3 free keywords
                         writing_feedback=None,  # Strip (gated)
                         chart_paths={},  # No charts for free
                     )

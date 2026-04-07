@@ -1,4 +1,5 @@
 import { useCallback, useState, useEffect } from "react";
+import { Target, BarChart3, Zap, Activity, ShieldCheck, TrendingUp, AlertCircle, CheckCircle2, Lock } from 'lucide-react';
 import type { ComprehensiveAnalysisResult, UserTierEnum } from "./types";
 import { ResumeComparison } from "./ResomeComparison";
 import { AuthModal } from "./components/AuthModal";
@@ -851,10 +852,10 @@ function App() {
             <ProgressBar currentStep={currentStep + 1} totalSteps={ANALYSIS_STEPS.length} message={ANALYSIS_STEPS[currentStep] || "Processing..."} />
             
             {/* Phase 1: Real-Time Keyword Widget (Enhanced) */}
-            {liveKeywords && (
+            {result?.keyword_heatmap?.keywords && (
               <EnhancedLiveKeywordWidget 
-                data={liveKeywords} 
-                isFreeUser={user?.tier !== "pro"}
+                keywords={result?.keyword_heatmap?.keywords} 
+                confidence={result?.ats_score?.confidence_score}
               />
             )}
           </section>
@@ -874,12 +875,11 @@ function App() {
                 </button>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-5 mb-6">
+              <div className="grid gap-4 sm:grid-cols-4 mb-6">
                 <ScoreCard label="ATS Score" score={result?.ats_score?.final_ats_score ?? 0} icon="📊" />
+                <ScoreCard label="Percentile" score={result?.ats_score?.percentile_rank ?? 0} icon="📈" />
                 <ScoreCard label="Skill Gap" score={result?.skill_gap?.gap_score ?? 0} icon="🎯" locked={user?.tier !== "pro"} />
                 <ScoreCard label="Quality" score={result?.resume_quality?.overall_score ?? 0} icon="⭐" locked={user?.tier !== "pro"} />
-                <ScoreCard label="Readability" score={result?.resume_quality?.readability_score ?? 0} icon="📖" locked={user?.tier !== "pro"} />
-                <ScoreCard label="Keywords" score={result?.resume_quality?.keyword_density_score ?? 0} icon="🔑" locked={user?.tier !== "pro"} />
               </div>
 
               <button
@@ -918,11 +918,11 @@ function App() {
               )}
 
               {/* HOOK 2: Missing Skills → Course Affiliates */}
-              {result?.skill_gap?.missing_keywords && result?.skill_gap?.missing_keywords.length > 0 && (
+              {result?.skill_gap?.missing_skills && result?.skill_gap?.missing_skills.length > 0 && (
                 <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4 my-4 rounded-lg">
                   <p className="font-semibold text-yellow-800">📚 Close the skill gap:</p>
                   <ul className="mt-2 space-y-2">
-                    {result?.skill_gap?.missing_keywords?.slice(0, 3).map((skill: string) => {
+                    {result?.skill_gap?.missing_skills?.slice(0, 3).map((skill: string) => {
                       const courseMap: Record<string, string> = {
                         'python': 'https://coursera.pxf.io/c/3045222/1206682/14726?u=https%3A%2F%2Fcoursera.org%2Flearn%2Fpython-for-everybody',
                         'sql': 'https://udemy.com/sql-for-data-analysis/?couponCode=SKILLS2024',
@@ -1145,6 +1145,19 @@ function App() {
                     ))}
                   </ul>
                 </div>
+                {result?.writing_feedback?.suggestions && result.writing_feedback.suggestions.length > 0 && (
+                  <div className="glass-card p-6">
+                    <h3 className="mb-4 font-semibold text-white flex items-center gap-2">✍️ Writing Suggestions</h3>
+                    <ul className="space-y-3">
+                      {result.writing_feedback.suggestions.map((suggestion, i) => (
+                        <li key={i} className="flex gap-3 text-sm text-slate-300">
+                          <span className="text-blue-400 font-bold">{i + 1}.</span>
+                          <span>{suggestion}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1153,15 +1166,36 @@ function App() {
               <div className="relative space-y-6">
                 {user?.tier !== "pro" && <PaywallOverlay onUpgradeClick={() => setShowUpgradeModal(true)} />}
                 <div className="glass-card p-6">
-                  <h3 className="mb-4 font-semibold text-white">Keyword Analysis</h3>
+                  <h3 className="mb-4 font-semibold text-white">Extracted Keywords from Resume</h3>
                   <div className="space-y-4">
                     <div>
-                      <h4 className="text-sm font-medium text-slate-300 mb-3">Missing Keywords ({result?.ats_score?.missing_keywords?.length || 0})</h4>
+                      <h4 className="text-sm font-medium text-slate-300 mb-3">Keywords Found ({result?.keyword_heatmap?.keywords?.length || 0})</h4>
                       <div className="flex flex-wrap gap-2">
-                        {(result?.ats_score?.missing_keywords || []).slice(0, 30).map((k) => (
-                          <Tag key={k} text={k} variant="warning" locked={user?.tier !== "pro"} />
+                        {(result?.keyword_heatmap?.keywords || []).slice(0, 30).map((k, idx) => (
+                          <Tag key={idx} text={k} variant="success" locked={user?.tier !== "pro"} />
                         ))}
                       </div>
+                      
+                      {/* Ghost Keywords Teaser for Free Users */}
+                      {user?.tier === "free" && result?.keyword_heatmap && result.keyword_heatmap.keywords.length > 3 && (
+                        <div className="mt-4 p-4 bg-gradient-to-r from-amber-900/50 to-orange-900/50 border border-amber-600 rounded-lg text-center">
+                          <div className="flex items-center justify-center gap-2 mb-2">
+                            <span className="text-2xl">🔒</span>
+                            <p className="text-amber-300 font-bold">
+                              + {result.keyword_heatmap.keywords.length - 3} MORE KEYWORDS WAITING
+                            </p>
+                          </div>
+                          <p className="text-xs text-amber-200 mb-3">
+                            Pro users unlock all extracted keywords + see which ones ATS scanners prioritize
+                          </p>
+                          <button 
+                            onClick={() => setShowUpgradeModal(true)}
+                            className="w-full bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold py-2 px-4 rounded-lg transition-all transform hover:scale-105 shadow-lg"
+                          >
+                            🚀 Unlock All Keywords – Only $5/month
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <div>
                       <h4 className="text-sm font-medium text-slate-300 mb-3">Recommended to Add</h4>

@@ -19,43 +19,59 @@ if api_key:
     genai.configure(api_key=api_key)
 
 
-SYSTEM_OPT = """You are an expert ATS resume optimizer. Your task is to substantially improve resumes for applicant tracking systems.
+SYSTEM_OPT = """You are an AGGRESSIVE ATS resume optimizer. Your task is to DRAMATICALLY improve resumes for applicant tracking systems.
 
 CRITICAL RULES:
 1. Do NOT fabricate experience, jobs, or skills. Only reword and restructure what is already in the resume.
-2. MUST integrate job description keywords ACTIVELY—at least 20% more keyword density than original.
-3. Use STRONG action verbs (e.g., "Spearheaded", "Architected", "Optimized", "Accelerated", "Engineered").
-4. Reorder bullets to prioritize keywords that match the job description FIRST.
-5. Use ATS-friendly formatting: clear SECTIONS, bullet points, no icons or special characters.
-6. Metrics are ONLY acceptable if implied or stated in original (e.g., "Led team" → "Led team of 5").
-7. STRICT: You MUST rewrite substantial portions of the resume. DO NOT return text identical or near-identical to the original.
-8. Return STRICT JSON only. No explanations."""
+2. MUST integrate job description keywords ACTIVELY—inject at least 25% more keyword matches than original.
+3. Use STRONG action verbs: Spearheaded, Architected, Optimized, Accelerated, Engineered, Designed, Developed, Delivered, Streamlined.
+4. REORDER all bullet points—put the most job-matching bullets FIRST in each role.
+5. Use ATS-friendly formatting: CLEAR SECTIONS, bullet points, NO icons or special characters.
+6. REWRITE entire bullet points—don't just swap one word. Change structure, order, and emphasis.
+7. Example transformation:
+   WEAK: "Worked with Python and databases"
+   STRONG: "Engineered Python-based microservices integrating PostgreSQL and Redis for 40% performance gain"
+8. CRITICAL: The output MUST be noticeably different from the original by at least 25%.
+9. Return STRICT JSON only. No explanations."""
 
-USER_OPT_TEMPLATE = """CRITICAL INSTRUCTION: Optimize this resume for ATS matching the job description. 
+USER_OPT_TEMPLATE = """CRITICAL OPTIMIZATION TASK: Aggressively rewrite this resume for the job description below.
 
-YOU MUST:
-1. SUBSTANTIALLY rewrite the resume (not minimal changes)
-2. Integrate at least 20% more keywords from the job description
-3. Replace weak verbs with strong action verbs from the job description
-4. Reorder bullets to highlight matching keywords FIRST
-5. The output MUST be visibly different from the input
+YOU MUST MAKE SUBSTANTIAL CHANGES—not minor edits. Reorder, rephrase, restructure.
 
 Resume (original):
 ---
 {resume_text}
 ---
 
-Job description (keywords to incorporate):
+Job description keywords to inject (PRIORITIZE THESE):
 ---
 {jd_excerpt}
 ---
 
-MANDATORY: Return STRICT JSON with:
-- optimized_resume: SUBSTANTIALLY improved resume (plain text, use \\n for line breaks). MUST be different from original by at least 20%.
-- section_improvements: {{"summary": "specific changes made", "experience": "specific changes made", "skills": "specific changes made"}}
+REQUIRED TRANSFORMATIONS:
+1. Identify 3-5 most impactful bullet points to REWRITE (not just edit)
+2. Move job-matching bullets to the TOP of each job/section
+3. Replace ALL weak action verbs (worked, helped, used, did) with STRONG ones (engineered, architected, spearheaded, accelerated)
+4. ADD job description keywords where contextually relevant (no fabrication)
+5. Result must be AT LEAST 25% different from original
 
-STRICT REQUIREMENT: If the optimized_resume is too similar to the original, the optimization has FAILED. You must rewrite.
-Return STRICT JSON only. No markdown, no code blocks."""
+BAD EXAMPLE (not acceptable):
+- Original: "Worked with Python and SQL databases"
+- Bad optimization: "Worked with Python and SQL databases" (SAME)
+
+GOOD EXAMPLE (acceptable):
+- Original: "Worked with Python and SQL databases"
+- Good optimization: "Engineered data pipelines with Python and PostgreSQL, optimizing query performance by 35% through advanced indexing strategies"
+
+RESPONSE FORMAT - Return STRICT JSON only:
+{{
+  "optimized_resume": "SUBSTANTIALLY rewritten resume (plain text, use \\n for line breaks)",
+  "section_improvements": {{
+    "summary": "key changes to summary section",
+    "experience": "key changes to experience—explain reordering, verb upgrades, keyword injection",
+    "skills": "key changes to skills section"
+  }}
+}}"""
 
 
 async def optimize_resume(resume_text: str, jd_text: str) -> OptimizedResumeResponse:
@@ -83,10 +99,10 @@ async def optimize_resume(resume_text: str, jd_text: str) -> OptimizedResumeResp
             opt_text = str(data.get("optimized_resume") or "").strip().replace("\\n", "\n")
             si = data.get("section_improvements") or {}
             
-            # Validate: Check similarity - accept only if <=85% similar (>15% different)
+            # Validate: Check similarity - accept only if <=80% similar (>20% different)
             if opt_text:
                 similarity = _calculate_rewrite_similarity(resume_clean, opt_text)
-                if similarity <= 0.85:  # Accept if sufficiently different (>15% changed)
+                if similarity <= 0.80:  # Accept if sufficiently different (>20% changed)
                     return OptimizedResumeResponse(
                         optimized_resume=opt_text,
                         section_improvements=SectionImprovements(
@@ -97,7 +113,7 @@ async def optimize_resume(resume_text: str, jd_text: str) -> OptimizedResumeResp
                     )
                 elif retry_count < 2:
                     # Retry if too similar
-                    print(f"[ATS_OPTIMIZER] Attempt {retry_count + 1}: Similarity {similarity:.2%} too high (threshold: 85%), retrying...")
+                    print(f"[ATS_OPTIMIZER] Attempt {retry_count + 1}: Similarity {similarity:.2%} too high (threshold: 80%), retrying...")
                     continue
                 else:
                     # Final attempt - return even if not sufficiently different
