@@ -10,10 +10,11 @@ from openai import AsyncOpenAI
 # Load environment variables
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
-if not api_key:
-    raise ValueError("OPENAI_API_KEY not found in environment variables")
+# Note: This service is deprecated. Use gemini_service instead.
 
-client = AsyncOpenAI(api_key=api_key)
+client = None
+if api_key:
+    client = AsyncOpenAI(api_key=api_key)
 
 
 async def analyze_resume_match(resume_text: str, job_description: str) -> Dict:

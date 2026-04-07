@@ -8,7 +8,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from ..models import ATSScoreResponse, KeywordHeatmapData
+from ..models import ATSScoreResponse, KeywordHeatmapData, SkillGap
 
 
 # Professional color palette (emerald green and slate gray theme)
@@ -335,6 +335,103 @@ def chart_quality_breakdown(
         ax.text(bar.get_x() + bar.get_width()/2., height + 1, f"{score:.0f}", ha="center", va="bottom", fontsize=10, fontweight="bold", color=COLOR_PALETTE["slate_dark"])
     
     path = base / "quality_breakdown.png"
+    fig.patch.set_facecolor(COLOR_PALETTE["bg"])
+    ax.patch.set_facecolor(COLOR_PALETTE["bg"])
+    fig.tight_layout()
+    fig.savefig(path, dpi=100, bbox_inches="tight", facecolor=COLOR_PALETTE["bg"])
+    plt.close(fig)
+    return str(path)
+
+
+def chart_critical_gaps(
+    critical_gaps: list[SkillGap],
+    output_dir: Optional[Path] = None,
+) -> str:
+    """Horizontal bar chart for Top 5 Critical Gaps sorted by relevance score.
+    
+    Maintains safety for missing data by returning placeholder if no gaps exist.
+    """
+    base = output_dir or _ensure_chart_dir()
+    base.mkdir(parents=True, exist_ok=True)
+    
+    # Safety check: if no critical gaps, return placeholder
+    if not critical_gaps:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.text(
+            0.5, 0.5,
+            "No Critical Skill Gaps Detected",
+            ha="center",
+            va="center",
+            fontsize=14,
+            fontweight="bold",
+            color=COLOR_PALETTE["slate_dark"]
+        )
+        ax.axis("off")
+        ax.set_title("Top 5 Critical Gaps", fontsize=12, fontweight="bold", color=COLOR_PALETTE["slate_dark"], pad=16)
+        path = base / "critical_gaps.png"
+        fig.patch.set_facecolor(COLOR_PALETTE["bg"])
+        fig.tight_layout()
+        fig.savefig(path, dpi=100, bbox_inches="tight", facecolor=COLOR_PALETTE["bg"])
+        plt.close(fig)
+        return str(path)
+    
+    # Prepare data: limit to top 5
+    top_gaps = critical_gaps[:5]
+    skills = [gap.skill for gap in top_gaps]
+    scores = [gap.relevance_score for gap in top_gaps]
+    categories = [gap.category for gap in top_gaps]
+    
+    # Map categories to colors
+    category_colors = {
+        "hard_gap": COLOR_PALETTE["danger"],     # Red for hard/technical gaps
+        "soft_gap": COLOR_PALETTE["accent"],    # Amber for soft gaps
+        "adjacent": COLOR_PALETTE["secondary"], # Cyan for adjacent/transferable
+    }
+    colors = [category_colors.get(cat, COLOR_PALETTE["accent"]) for cat in categories]
+    
+    # Create horizontal bar chart
+    fig, ax = plt.subplots(figsize=(10, 4 + len(top_gaps) * 0.3))
+    y_pos = range(len(top_gaps))
+    bars = ax.barh(y_pos, scores, color=colors, edgecolor=COLOR_PALETTE["slate_dark"], linewidth=1.5)
+    
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(skills, fontsize=10, color=COLOR_PALETTE["slate_dark"], fontweight="bold")
+    ax.set_xlabel("Relevance Score (1-10)", fontsize=11, color=COLOR_PALETTE["slate_dark"], fontweight="bold")
+    ax.set_xlim(0, 10)
+    ax.set_xticks([0, 2, 4, 6, 8, 10])
+    ax.set_xticklabels(["0", "2", "4", "6", "8", "10"], color=COLOR_PALETTE["slate_dark"])
+    ax.set_title("Top 5 Critical Skill Gaps", fontsize=12, fontweight="bold", color=COLOR_PALETTE["slate_dark"], pad=16)
+    
+    # Styling
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color(COLOR_PALETTE["slate_light"])
+    ax.spines["bottom"].set_color(COLOR_PALETTE["slate_light"])
+    ax.tick_params(colors=COLOR_PALETTE["slate_dark"])
+    ax.invert_yaxis()  # Top gap at top
+    
+    # Add score labels and category badges
+    for i, (bar, score, cat) in enumerate(zip(bars, scores, categories)):
+        # Score label
+        ax.text(score + 0.2, bar.get_y() + bar.get_height()/2, f"{score:.1f}", 
+                va="center", fontsize=9, fontweight="bold", color=COLOR_PALETTE["slate_dark"])
+        # Category badge
+        cat_label = cat.replace("_", " ").title()
+        ax.text(0.2, bar.get_y() + bar.get_height()/2, cat_label,
+                va="center", ha="left", fontsize=8, color="white", fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor=colors[i], alpha=0.8, edgecolor="none"))
+    
+    # Add legend
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor=COLOR_PALETTE["danger"], label="Hard Gap (Technical)"),
+        Patch(facecolor=COLOR_PALETTE["accent"], label="Soft Gap (Interpersonal)"),
+        Patch(facecolor=COLOR_PALETTE["secondary"], label="Adjacent (Transferable)"),
+    ]
+    ax.legend(handles=legend_elements, fontsize=9, loc="lower right", facecolor=COLOR_PALETTE["bg"], 
+              edgecolor=COLOR_PALETTE["slate_light"], framealpha=0.9)
+    
+    path = base / "critical_gaps.png"
     fig.patch.set_facecolor(COLOR_PALETTE["bg"])
     ax.patch.set_facecolor(COLOR_PALETTE["bg"])
     fig.tight_layout()

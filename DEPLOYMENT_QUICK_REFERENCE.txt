@@ -1,0 +1,291 @@
+╔════════════════════════════════════════════════════════════════════════════════╗
+║         PRODUCTION DEPLOYMENT QUICK REFERENCE CARD - v2.0                      ║
+║                    Keep this handy during deployment!                          ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+═══════════════════════════════════════════════════════════════════════════════════
+BEFORE YOU START
+═══════════════════════════════════════════════════════════════════════════════════
+
+☐ Read: DEPLOYMENT_CHECKLIST.txt
+☐ Have: 2+ people for deployment
+☐ Backup: Database backup created and tested
+☐ Monitor: Monitoring dashboard open & alerting configured
+☐ Creds: Production .env file with live Stripe keys
+☐ Chat: Slack #ops channel open
+☐ Time: Low-traffic window scheduled (2-4 AM ideal)
+
+═══════════════════════════════════════════════════════════════════════════════════
+DEPLOYMENT TIMELINE (Follow PRODUCTION_DEPLOYMENT_GUIDE.txt)
+═══════════════════════════════════════════════════════════════════════════════════
+
+T+0 min   → Enable maintenance mode (serve maintenance.html)
+T+1 min   → Disable traffic to backend (load balancer or k8s)
+T+2 min   → Stop background workers
+T+3 min   → Run database migrations (if any)
+T+5-10 min → Deploy new backend code
+T+11-12 min → Start backend, verify health check
+T+13 min  → Start background workers
+T+14-15 min → Deploy new frontend code
+T+16 min  → Re-enable traffic to backend
+T+18 min  → Disable maintenance mode
+
+TOTAL: ~20-30 minutes if no issues
+
+═══════════════════════════════════════════════════════════════════════════════════
+CRITICAL COMMANDS
+═══════════════════════════════════════════════════════════════════════════════════
+
+BEFORE DEPLOYMENT:
+─────────────────
+
+# Backup database
+pg_dump -h prod-db.example.com -U admin intelliresume_prod | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz
+
+# Verify backup
+gunzip -t backup_*.sql.gz && echo "✓ Backup OK"
+
+# Check current version
+ssh production-backend "cd /opt/intelliresume && git describe --tags"
+
+DURING DEPLOYMENT:
+──────────────────
+
+# Serve maintenance page (nginx)
+# Edit nginx config to point to maintenance.html, then:
+nginx -t && nginx -s reload
+
+# Stop backend
+systemctl stop intelliresume-backend
+
+# Deploy new code (git)
+cd /opt/intelliresume && git fetch origin && git checkout v2.0.0
+
+# Install deps
+pip install -r requirements.txt
+
+# Start backend
+systemctl start intelliresume-backend
+
+# Check health
+sleep 3 && curl http://localhost:8000/health | jq
+
+# Deploy frontend
+aws s3 sync dist/ s3://prod-cdn/
+aws cloudfront create-invalidation --distribution-id XXXXX --paths "/*"
+
+# Re-enable service
+nginx -s reload  # Remove maintenance mode
+
+AFTER DEPLOYMENT:
+─────────────────
+
+# Health checks
+curl https://app.example.com/api/health | jq
+curl https://app.example.com/  # Should be app, not maintenance
+
+# Spot check
+Open browser → https://app.example.com
+Upload resume & JD → Should analyze in <5 seconds
+Try upgrade flow → Should show Stripe modal
+
+# Monitor
+tail -f /var/log/intelliresume/backend.log
+# Watch for: No errors, normal operation
+
+═══════════════════════════════════════════════════════════════════════════════════
+SUCCESS CRITERIA (Must verify all before declaring success)
+═══════════════════════════════════════════════════════════════════════════════════
+
+User Flow:
+  ☐ Users can upload resume + JD (no 500 errors)
+  ☐ Analysis starts (202 response with session_id)
+  ☐ Results return within 5 seconds (GET /api/analysis/{id}/status)
+  ☐ All data displays correctly (keywords, scores, feedback)
+  ☐ Upgrade button works (Stripe modal loads)
+  ☐ Payment processes (test card: 4242 4242 4242 4242)
+  ☐ Tier updates to "pro" after payment
+  ☐ Premium features unlock
+
+Browser:
+  ☐ F12 → Console tab → NO red errors (warnings OK)
+  ☐ F12 → Network tab → All requests 200 OK (no 404s)
+  ☐ Page responsive on desktop & mobile
+
+Backend:
+  ☐ /health endpoint returns 200 OK with version
+  ☐ Logs show NO 5xx errors
+  ☐ Error rate < 0.5% (check monitoring)
+  ☐ Response time < 500ms average (check monitoring)
+
+Database:
+  ☐ New analyses appear in analysis_results table
+  ☐ User tier updates appear
+  ☐ All 4 revenue columns populated (percentile_rank, confidence_score, etc.)
+
+Monitoring:
+  ☐ Dashboard shows green (no alerts firing)
+  ☐ CPU < 50%
+  ☐ Memory < 70%
+  ☐ Disk space > 20% free
+
+═══════════════════════════════════════════════════════════════════════════════════
+IF SOMETHING GOES WRONG → ROLLBACK
+═══════════════════════════════════════════════════════════════════════════════════
+
+PROBLEM: Errors in logs, endpoint returning 500s
+───────────────────────────────────────────────
+
+1. Stop backend:
+   systemctl stop intelliresume-backend
+
+2. Revert code:
+   git checkout v1.9.0  (previous working version)
+
+3. Restart:
+   pip install -r requirements.txt
+   systemctl start intelliresume-backend
+
+4. Verify:
+   curl http://localhost:8000/health
+
+5. Check logs:
+   tail -f /var/log/intelliresume/backend.log
+
+PROBLEM: Database connection failing
+─────────────────────────────────────
+
+1. Check connection:
+   psql -h prod-db.example.com -U admin -d intelliresume_prod -c "SELECT 1"
+
+2. If migration broke DB:
+   # LAST RESORT - requires backup!
+   
+   # Kill connections:
+   psql -h prod-db.example.com -U admin << 'EOF'
+   SELECT pg_terminate_backend(pid) FROM pg_stat_activity 
+     WHERE datname='intelliresume_prod' AND pid <> pg_backend_pid();
+   EOF
+   
+   # Drop & restore:
+   dropdb -h prod-db.example.com -U admin intelliresume_prod
+   createdb -h prod-db.example.com -U admin intelliresume_prod
+   gunzip -c backup_*.sql.gz | psql -h prod-db.example.com -U admin intelliresume_prod
+
+PROBLEM: Payment not working
+──────────────────────────────
+
+1. Check Stripe dashboard:
+   https://dashboard.stripe.com/test/webhooks
+
+2. Verify webhook handler is running:
+   curl -X POST http://localhost:8000/api/stripe/webhook \
+     -H "stripe-signature: test" \
+     -d '{"type":"charge.succeeded"}'
+
+3. Check webhook secret:
+   grep STRIPE_SECRET_KEY .env
+
+PROBLEM: Performance slow after deployment
+─────────────────────────────────────────
+
+1. Check backend CPU/memory:
+   top → Is process using >80% CPU?
+
+2. Check database:
+   psql intelliresume_prod -c "SELECT * FROM pg_stat_statements \
+     ORDER BY total_exec_time DESC LIMIT 5;"
+
+3. Scale if needed:
+   # Add more backend instances
+   kubectl scale deployment intelliresume-backend --replicas=4
+
+═══════════════════════════════════════════════════════════════════════════════════
+USEFUL MONITORING QUERIES
+═══════════════════════════════════════════════════════════════════════════════════
+
+# Check error rate (last 1 hour)
+tail -n 100 /var/log/intelliresume/backend.log | grep -c "ERROR\|500"
+
+# Check response times
+grep "response_time" /var/log/intelliresume/backend.log | head -20
+
+# Count analyses by status
+psql intelliresume_prod -c "SELECT status, COUNT(*) FROM analysis_results \
+  WHERE created_at > NOW() - INTERVAL '1 hour' GROUP BY status;"
+
+# Check active users
+psql intelliresume_prod -c "SELECT COUNT(*) FROM users \
+  WHERE last_login > NOW() - INTERVAL '1 hour';"
+
+# Monitor Stripe events
+curl -H "Authorization: Bearer $STRIPE_SECRET_KEY" \
+  https://api.stripe.com/v1/events?limit=10
+
+# Database size
+psql intelliresume_prod -c "SELECT pg_size_pretty(pg_database_size('intelliresume_prod'));"
+
+═══════════════════════════════════════════════════════════════════════════════════
+EMERGENCY CONTACTS
+═══════════════════════════════════════════════════════════════════════════════════
+
+Person A (Executing): ________________________  Phone: ___________
+Person B (Monitoring): ________________________  Phone: ___________
+On-Call Primary: ________________________  Phone: ___________
+On-Call Backup: ________________________  Phone: ___________
+
+Stripe Support: https://support.stripe.com
+Google Cloud: https://cloud.google.com/support
+AWS Support: https://console.aws.amazon.com/support
+
+═══════════════════════════════════════════════════════════════════════════════════
+POST-DEPLOYMENT CHECKLIST (First 24 Hours)
+═══════════════════════════════════════════════════════════════════════════════════
+
+Hour 1: Someone watching dashboard constantly
+  ☐ Error rate stable (<0.5%)
+  ☐ Response times normal (<500ms avg)
+  ☐ No database errors
+  ☐ Payments processing (check Stripe)
+
+Hour 6: Check-in every 15 minutes
+  ☐ System health stable
+  ☐ No unusual errors in logs
+  ☐ User feedback positive
+  ☐ All integrations working
+
+Hour 24: Final validation
+  ☐ No issues overnight (check logs)
+  ☐ Automated backups completed
+  ☐ Monitoring alerting correctly
+  ☐ Post-deployment document
+
+═══════════════════════════════════════════════════════════════════════════════════
+STATUS LOG (Fill this in during deployment)
+═══════════════════════════════════════════════════════════════════════════════════
+
+Deployment Start: _______________  Env: ☐ Staging  ☐ Production
+
+T+0 min  Maintenance Mode Enabled _______________  Status: ☐ OK  ☐ ERROR
+T+1 min  Traffic Disabled       _______________  Status: ☐ OK  ☐ ERROR
+T+3 min  DB Migration Done      _______________  Status: ☐ OK  ☐ ERROR
+T+10 min Code Deployed          _______________  Status: ☐ OK  ☐ ERROR
+T+12 min Health Check OK         _______________  Status: ☐ OK  ☐ ERROR
+T+15 min Frontend Deployed       _______________  Status: ☐ OK  ☐ ERROR
+T+18 min Traffic Re-enabled      _______________  Status: ☐ OK  ☐ ERROR
+T+22 min Maintenance Mode Off    _______________  Status: ☐ OK  ☐ ERROR
+
+SMOKE TESTS:
+  ☐ User flows working         Time: _______________
+  ☐ Metrics green              Time: _______________
+  ☐ No console errors          Time: _______________
+  ☐ Errors < 0.5%              Time: _______________
+
+Deployment Complete Time: _______________
+Any Issues?: _________________________ Y/N
+
+═══════════════════════════════════════════════════════════════════════════════════
+
+Print this page & keep it visible during deployment! 📋
+
+Last Updated: 2025-04-07 | Version: 2.0.0 | Status: READY ✅

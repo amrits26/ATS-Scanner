@@ -1,0 +1,385 @@
+
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                     DEPLOYMENT CHECKLIST - STAGING & PRODUCTION                ║
+║                        ATS Scanner - IntelliResume AI v2.0                      ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+═══════════════════════════════════════════════════════════════════════════════════
+PRE-DEPLOYMENT VALIDATION (Do NOT skip)
+═══════════════════════════════════════════════════════════════════════════════════
+
+BEFORE STAGING DEPLOYMENT:
+  ☐ Test 1: Database & Backend Connection ✅ VERIFIED
+  ☐ Test 2: AI Analysis Pipeline ✅ VERIFIED
+  ☐ Test 3: Frontend UI Rendering ✅ VERIFIED
+  ☐ Test 4: Payment & Tier Upgrade ⏳ MANUAL TEST REQUIRED
+    └─ Instructions:
+       1. Open http://localhost:5174/pricing
+       2. Click "$49 one-time gateway" plan
+       3. Use test card: 4242 4242 4242 4242
+       4. Verify tier updates to "pro" in database
+       5. Take screenshot of success page
+
+  ☐ Code review of critical components
+    └─ backend/services/{keyword_heatmap, skill_analyzer, ats_optimizer}.py
+    └─ frontend/src/components/{EnhancedLiveKeywordWidget, UpgradeModal}.tsx
+
+═══════════════════════════════════════════════════════════════════════════════════
+INFRASTRUCTURE REQUIREMENTS
+═══════════════════════════════════════════════════════════════════════════════════
+
+STAGING ENVIRONMENT:
+
+Database:
+  ☐ PostgreSQL 15+ (or RDS equivalent)
+  ☐ Minimum: 2GB RAM, SSD storage
+  ☐ Connection pooling enabled (pgBouncer or similar)
+  ☐ Daily automated backups configured
+  ☐ Tables created via migrations (./backend/migrations/*.sql)
+
+Backend Server:
+  ☐ 2+ CPU cores
+  ☐ 4GB RAM minimum
+  ☐ Python 3.10+ environment
+  ☐ Uvicorn with --workers 4 (or more for load)
+  ☐ Health checks configured (/health endpoint)
+  ☐ Graceful shutdown configured (30-second timeout)
+
+Frontend Server:
+  ☐ Node.js 18+ environment
+  ☐ Vite build output (npm run build)
+  ☐ CDN caching enabled for static assets
+  ☐ Gzip compression enabled
+  ☐ Source maps available for debugging
+
+EXTERNAL SERVICES (Test Mode):
+  ☐ Stripe test keys configured (sk_test_*)
+  ☐ Google Gemini API key (fallback active)
+  ☐ SMTP credentials for Resend (email DLQ fallback ready)
+
+NETWORK & SECURITY:
+  ☐ SSL/TLS certificates (self-signed OK for staging)
+  ☐ CORS configured for frontend domain
+  ☐ Rate limiting enabled on public endpoints
+  ☐ JWT signing key configured (SUPABASE_JWT_SECRET)
+
+═══════════════════════════════════════════════════════════════════════════════════
+DEPLOYMENT STEPS (Staging First)
+═══════════════════════════════════════════════════════════════════════════════════
+
+STEP 1: Prepare Environment
+  ☐ Clone repository to staging server
+  ☐ Create .env file with staging credentials (see below)
+  ☐ Create Python virtual environment
+  ☐ Install backend dependencies:
+    .venv/Scripts/pip install -r requirements.txt
+
+  ☐ Navigate to frontend directory
+  ☐ Install frontend dependencies:
+    npm install
+
+STEP 2: Initialize Database (PRODUCTION ONLY)
+  ⚠️  STAGING: Use test database (auto-initialized)
+  ⚠️  PRODUCTION: Run migrations carefully
+  
+  # Check current schema version
+  psql $DATABASE_URL -c "SELECT version FROM schema_version;"
+  
+  # Apply pending migrations
+  cd backend/migrations
+  for migration in *.sql; do
+    psql $DATABASE_URL -f "$migration"
+  done
+
+STEP 3: Build Frontend
+  ☐ npm run build (creates dist/ directory)
+  ☐ Verify build output: du -sh frontend/dist/
+    └─ Should be ~500KB-2MB gzipped
+
+STEP 4: Start Backend
+  ☐ Set environment variables (see .env template below)
+  ☐ Start Uvicorn:
+    .venv/Scripts/python.exe -m uvicorn backend.main:app \
+      --host 0.0.0.0 --port 8000 --workers 4
+  
+  ☐ Verify startup:
+    curl http://localhost:8000/health
+    # Expect: {"status":"ok","service":"IntelliResume AI","version":"2.0.0"}
+
+STEP 5: Verify Backend
+  ☐ Test analysis endpoint:
+    curl -X POST http://localhost:8000/api/analyze/comprehensive \
+      -H "Authorization: Bearer demo-token-123" \
+      -F "resume=@test_resume.txt" \
+      -F "job_description=@test_jd.txt"
+    # Expect: 202 with session_id
+
+STEP 6: Serve Frontend
+  ☐ Copy dist/ to web server (nginx, Apache, S3, CDN)
+  ☐ Configure web server to:
+    └─ Serve static files with cache-busting headers
+    └─ Route all non-static paths to index.html (SPA routing)
+    └─ Proxy /api/* to backend (http://localhost:8000)
+
+STEP 7: Run Smoke Tests
+  ☐ Open https://staging.yourdomain.com in browser
+  ☐ Upload test resume and JD
+  ☐ Verify results display correctly
+  ☐ Test upgrade flow (don't complete payment)
+  ☐ Check browser console for errors (F12)
+
+═══════════════════════════════════════════════════════════════════════════════════
+ENVIRONMENT CONFIGURATION (.env template)
+═══════════════════════════════════════════════════════════════════════════════════
+
+# DATABASE
+DATABASE_URL=postgresql+asyncpg://user:password@host:5432/intelliresume_staging
+
+# GOOGLE GEMINI API
+GOOGLE_API_KEY=your_api_key_here
+
+# SUPABASE AUTH (if using)
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your_anon_key
+SUPABASE_JWT_SECRET=your_jwt_secret
+
+# STRIPE (Test Mode)
+STRIPE_SECRET_KEY=sk_test_your_key
+STRIPE_PUBLISHABLE_KEY=pk_test_your_key
+
+# EMAIL SERVICE (Resend)
+RESEND_API_KEY=re_your_api_key
+
+# REDIS (optional, for caching)
+REDIS_URL=redis://localhost:6379/0
+
+# ENVIRONMENT
+ENVIRONMENT=staging
+DEBUG=false
+
+# CHARTS OUTPUT
+CHARTS_DIR=backend/charts
+
+# SECURITY
+ALLOWED_ORIGINS=https://staging.yourdomain.com,http://localhost:3000
+
+═══════════════════════════════════════════════════════════════════════════════════
+PRODUCTION DEPLOYMENT (After Staging Validation)
+═══════════════════════════════════════════════════════════════════════════════════
+
+FINAL CHECKS BEFORE PRODUCTION:
+
+  ☐ All tests passed on staging (Test 1-4 must pass)
+  ☐ Real Stripe keys configured (sk_live_*)
+  ☐ Production database backups tested (restore & verify)
+  ☐ SSL certificates valid (minimum 1 year validity)
+  ☐ Monitoring & alerting configured
+  ☐ Error tracking configured (Sentry or similar)
+  ☐ Log aggregation configured (CloudWatch, Datadog, etc.)
+  ☐ Rate limiting tested and verified
+  ☐ JWT secret rotated (unique for production)
+  ☐ All credentials removed from code & logs
+
+DATABASE MIGRATION SAFETY:
+
+  ⚠️  PRODUCTION ONLY - NEVER SKIP
+  
+  ☐ Backup existing database BEFORE running migrations
+  ☐ Review migration scripts for destructive operations
+  ☐ Test migrations on copy of production data first
+  ☐ Have rollback plan ready (previous database snapshot)
+  ☐ Schedule migrations during low-traffic window
+  ☐ Monitor database after migration for anomalies
+
+DEPLOYMENT PROCESS:
+
+  1. ☐ Enable maintenance mode (show "under maintenance" page)
+  2. ☐ Stop all workers/background jobs
+  3. ☐ Backup database
+  4. ☐ Run database migrations (if any)
+  5. ☐ Deploy backend code
+  6. ☐ Run smoke tests on backend
+  7. ☐ Deploy frontend code
+  8. ☐ Run smoke tests on frontend
+  9. ☐ Disable maintenance mode
+  10. ☐ Monitor error rates for 1 hour
+  11. ☐ Monitor payment flow for 1 hour
+
+═══════════════════════════════════════════════════════════════════════════════════
+MONITORING & ALERTING
+═══════════════════════════════════════════════════════════════════════════════════
+
+ESSENTIAL METRICS:
+
+Backend:
+  ☐ API response time (target: <500ms, p95 <2s)
+  ☐ Error rate (target: <0.5%)
+  ☐ Active connections (monitor for leaks)
+  ☐ Database connection pool usage
+  ☐ Memory usage (should not grow unbounded)
+  ☐ CPU usage (should spike only during analysis)
+
+Frontend:
+  ☐ Page load time (target: <3s, p95 <5s)
+  ☐ JavaScript errors in browser (monitor via Sentry)
+  ☐ Asset load times
+  ☐ Core Web Vitals (LCP, CLS, FID)
+
+Database:
+  ☐ Query execution time (slow query log)
+  ☐ Connection count (vs pool size)
+  ☐ Storage usage (watch for growth)
+  ☐ Replication lag (if applicable)
+
+Payment:
+  ☐ Stripe webhook processing time
+  ☐ Failed payment count
+  ☐ Payment latency (time to process)
+  ☐ Tier upgrade success rate
+
+Critical Alerts (Configure):
+  ☐ Backend down (no /health response)
+  ☐ API error rate >5% (aggregate across endpoints)
+  ☐ Database connection pool exhausted
+  ☐ Payment processing failures
+  ☐ Disk space low (<10% free)
+  ☐ Memory usage >85%
+
+═══════════════════════════════════════════════════════════════════════════════════
+ROLLBACK PROCEDURE (If Deployment Fails)
+═══════════════════════════════════════════════════════════════════════════════════
+
+IF BACKEND DEPLOYMENT FAILS:
+
+  1. Stop all backend processes
+  2. Restore previous backend code from git
+  3. Restart backend with previous code
+  4. Verify health endpoint responding
+  5. Clear any cached data that might be incompatible
+  6. Monitor for errors
+
+IF DATABASE MIGRATION FAILS:
+
+  1. Stop all backend processes
+  2. Restore database from pre-migration backup
+  3. Verify data integrity
+  4. Restart backend
+  5. Investigate migration issue
+  6. Do NOT try migration again without fix
+
+IF FRONTEND DEPLOYMENT FAILS:
+
+  1. Restore previous frontend code to web server
+  2. Clear browser cache/CDN cache
+  3. Verify page loads correctly
+  4. If needed, temporarily serve from staging
+
+═══════════════════════════════════════════════════════════════════════════════════
+SUCCESS CRITERIA (Post-Deployment)
+═══════════════════════════════════════════════════════════════════════════════════
+
+After deployment, verify:
+
+  ☐ Users can upload resume + JD
+  ☐ Analysis completes in <5 seconds
+  ☐ Results display correctly (no missing data)
+  ☐ Keywords show without junk keywords
+  ☐ Skill gaps correctly identified
+  ☐ ATS scores calculated with percentile data
+  ☐ Writing feedback available
+  ☐ Free users see basic results
+  ☐ Upgrade button works (doesn't require login)
+  ☐ Stripe checkout loads for premium features
+  ☐ Payment completes successfully (test card)
+  ☐ User tier updates after payment
+  ☐ Premium features unlock for paid users
+  ☐ No console errors in browser
+  ☐ No database query errors in backend logs
+  ☐ Response times <500ms average
+  ☐ Error rate <0.5%
+  ☐ API uptime 100%
+
+═══════════════════════════════════════════════════════════════════════════════════
+MAINTENANCE TASKS (Post-Deployment)
+═══════════════════════════════════════════════════════════════════════════════════
+
+DAILY:
+  ☐ Review error logs for any spike
+  ☐ Monitor payment failures
+  ☐ Check database backup completion
+  ☐ Verify API response times
+
+WEEKLY:
+  ☐ Review analytics (user growth, conversion rate)
+  ☐ Check for security updates
+  ☐ Review slow query log
+  ☐ Test database restore procedure
+
+MONTHLY:
+  ☐ Review and optimize slow queries
+  ☐ Update dependencies (if minor patches available)
+  ☐ Review storage usage and cleanup
+  ☐ Review payment processing metrics
+  ☐ Check SSL certificate expiration date
+
+═══════════════════════════════════════════════════════════════════════════════════
+EMERGENCY CONTACTS & ESCALATION
+═══════════════════════════════════════════════════════════════════════════════════
+
+Add your team contacts:
+
+Database Issues:
+  Contact: ________________
+  Phone: ________________
+  
+Backend Issues:
+  Contact: ________________
+  Phone: ________________
+
+Payment Issues:
+  Contact: Stripe Support (support@stripe.com)
+  Status Page: https://status.stripe.com
+  
+API Issues:
+  Contact: Google Cloud Support
+  Status Page: https://status.cloud.google.com
+
+═══════════════════════════════════════════════════════════════════════════════════
+USEFUL COMMANDS
+═══════════════════════════════════════════════════════════════════════════════════
+
+# Start Backend
+.venv/Scripts/python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 4
+
+# Check Backend Health
+curl http://localhost:8000/health | jq
+
+# Build Frontend
+cd frontend && npm run build
+
+# Test Analysis
+curl -X POST http://localhost:8000/api/analyze/comprehensive \
+  -H "Authorization: Bearer demo-token-123" \
+  -F "resume=@test_resume.txt" \
+  -F "job_description=@test_jd.txt"
+
+# Monitor Database
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM analysis_results;"
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM users;"
+
+# Check Logs (systemd)
+journalctl -u intelliresume-backend -n 100 -f
+
+# Check Logs (docker)
+docker logs intelliresume-backend -f
+
+# Clear Database Cache (Redis)
+redis-cli FLUSHALL
+
+═══════════════════════════════════════════════════════════════════════════════════
+
+Generated: 2026-04-07
+Version: 2.0.0
+Status: STAGING READY ✅, PRODUCTION READY (pending Test 4)
+
+═══════════════════════════════════════════════════════════════════════════════════

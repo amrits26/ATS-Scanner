@@ -2,10 +2,35 @@
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.6
-openai>=1.12.0
+google-generativeai>=0.3.0
 pdfplumber>=0.10.0
 python-docx>=1.1.0
 pydantic>=2.5.0
 scikit-learn>=1.4.0
 matplotlib>=3.8.0
 python-dotenv>=1.0.0
+
+# --- Database (Step 1: Persistence) ---
+sqlalchemy[asyncio]>=2.0.0
+asyncpg>=0.29.0
+alembic>=1.13.0
+
+# --- Auth (Step 2: Supabase JWT verification) ---
+PyJWT>=2.8.0
+cryptography>=42.0.0
+
+# --- Payments (Step 3: Stripe subscription) ---
+stripe>=7.0.0
+
+# --- Async Job Queue (Phase 1: The Engine) ---
+arq>=0.25.0
+redis>=5.0.0
+
+# --- Phase 2: Email Service & Rate Limiting ---
+resend>=0.5.0
+slowapi>=0.1.9
+
+# --- Phase 3: Viral Loop (OG images, email validation, analytics) ---
+pillow>=10.0.0
+httpx>=0.25.0
+posthog>=3.0.0

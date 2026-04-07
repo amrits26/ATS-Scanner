@@ -58,4 +58,10 @@ def extract_resume_text(content: bytes, filename: str) -> str:
         return extract_text_from_pdf(content)
     if suffix in (".docx", ".doc"):
         return extract_text_from_docx(content)
+    if suffix == ".txt":
+        # Support plain text input for testing
+        try:
+            return clean_extracted_text(content.decode('utf-8'))
+        except Exception:
+            return ""
     return ""

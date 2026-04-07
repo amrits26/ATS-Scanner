@@ -2,7 +2,7 @@
 
 import re
 from ..models import ResumeQualityScore
-from ..utils.text_cleaner import extract_words, normalize_for_ats
+from ..utils.text_cleaner import extract_words
 
 
 def calculate_readability_score(text: str) -> float:

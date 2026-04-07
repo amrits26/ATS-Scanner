@@ -1,0 +1,604 @@
+
+╔════════════════════════════════════════════════════════════════════════════════╗
+║              PRODUCTION DEPLOYMENT GUIDE - ATS Scanner v2.0                   ║
+║                       IntelliResume AI - Revenue Platform                     ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+═══════════════════════════════════════════════════════════════════════════════════
+OVERVIEW & STRATEGY
+═══════════════════════════════════════════════════════════════════════════════════
+
+This guide covers the deployment of ATS Scanner from staging to production.
+
+Key Principles:
+  • Zero-downtime deployment (blue-green strategy)
+  • Automated rollback on failure
+  • Production database protected (separate from staging)
+  • Real Stripe keys configured (payment is LIVE)
+  • Monitoring active before cutover
+  • 2-person approval required for production changes
+
+Timeline Estimate: 45 minutes to 2 hours
+  • Preparation: 10 minutes
+  • Database migration: 5-15 minutes (depends on schema size)
+  • Backend deployment: 5 minutes
+  • Frontend deployment: 2 minutes
+  • Smoke testing: 10 minutes
+  • Monitoring validation: 15 minutes
+
+═══════════════════════════════════════════════════════════════════════════════════
+PRE-DEPLOYMENT CHECKLIST (DO NOT SKIP)
+═══════════════════════════════════════════════════════════════════════════════════
+
+REQUIRED APPROVALS:
+  ☐ Testing complete on staging (all tests passed)
+  ☐ Code review by 2 engineers (technical sign-off)
+  ☐ Security review completed (no leaked secrets)
+  ☐ Product owner approval (feature readiness)
+
+INFRASTRUCTURE VERIFICATION:
+  ☐ Production database exists and is accessible
+  ☐ Database backups are automated and tested (restore worked)
+  ☐ Monitoring system is active and receiving signals
+  ☐ Alerting rules configured and tested
+  ☐ Error tracking (Sentry) configured
+  ☐ Log aggregation active (CloudWatch, DataDog, etc.)
+  ☐ SSL certificates valid (>30 days remaining)
+  ☐ DNS records point to production servers
+  ☐ CDN configured for frontend assets
+  ☐ Load balancer operational (health checks passing)
+
+CREDENTIALS & SECRETS:
+  ☐ All staging keys replaced with production keys
+  ☐ Database password is strong (>16 chars, random)
+  ☐ JWT secret is unique (not shared with staging)
+  ☐ Stripe live keys configured (not test keys!)
+  ☐ Google API production quota allocated
+  ☐ SMTP credentials tested (email delivery works)
+  ☐ Secrets manager is configured (AWS Secrets Manager, HashiCorp Vault, etc.)
+  ☐ Secrets are NOT committed to git
+
+CAPACITY PLANNING:
+  ☐ Database sizing adequate for expected load
+  ☐ Backend server has enough CPU/memory (2+ cores, 4GB+ RAM)
+  ☐ Frontend CDN has capacity
+  ☐ Connection pooling configured
+  ☐ Rate limiting configured to prevent abuse
+
+════════════════════════════════════════════════════════════════════════════════════════════════
+PHASE 0: PREPARATION (Do This Before the Deployment Window)
+════════════════════════════════════════════════════════════════════════════════════════════════
+
+Step 1: Prepare Deployment Artifacts
+
+  # Build frontend for production
+  cd frontend
+  npm run build
+  # Output: dist/ directory with optimized static files
+  
+  # Verify build
+  du -sh dist/  # Should be <5MB
+  ls -la dist/index.html  # Should exist and be valid
+
+  # Create backend archive
+  tar -czf backend-production.tar.gz \
+    backend/ requirements.txt .env.prod.template
+  # Keep this safe - you may need to rollback
+
+Step 2: Database Backup & Verification
+
+  # Backup current production database (if exists)
+  # CRITICAL: Do NOT skip this
+  pg_dump -h prod-db.example.com -U admin intelliresume_prod \
+    | gzip > intelliresume_prod_backup_$(date +%Y%m%d_%H%M%S).sql.gz
+  
+  # Verify backup is readable
+  gunzip -t intelliresume_prod_backup_*.sql.gz
+  
+  # Store backup securely (AWS S3, multiple copies)
+  aws s3 cp intelliresume_prod_backup_*.sql.gz s3://your-backups/
+
+Step 3: Monitoring Dashboard Setup
+
+  # Create Grafana dashboard with key metrics
+  # Configure alerts for:
+  #   - API error rate threshold (alert if >1%)
+  #   - Database connection pool exhaustion
+  #   - Payment processing failures
+  #   - Backend response time (alert if >2s p95)
+
+  # Test alert channels work (Slack, PagerDuty, etc.)
+  # Example: Send test alert
+  curl -X POST your-monitoring/api/v1/alerts/test
+
+Step 4: Maintenance Mode Page
+
+  # Prepare static "Under Maintenance" page
+  # When deployed, this shows during cutover
+  # Users will see: "We're upgrading our systems. Back in 30 minutes."
+
+  # Generate with:
+  cat > maintenance.html << 'EOF'
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Maintenance</title>
+    <style>
+      body { 
+        font-family: sans-serif; 
+        display: flex; 
+        justify-content: center; 
+        align-items: center; 
+        height: 100vh;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      }
+      .box { 
+        text-align: center; 
+        color: white; 
+        padding: 40px; 
+        background: rgba(0,0,0,0.2); 
+        border-radius: 10px;
+      }
+      h1 { font-size: 48px; margin: 0; }
+      p { font-size: 18px; margin: 20px 0 0 0; }
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <h1>🔧 Under Maintenance</h1>
+      <p>We're upgrading our systems.</p>
+      <p>Back online in 30 minutes.</p>
+    </div>
+  </body>
+</html>
+EOF
+
+════════════════════════════════════════════════════════════════════════════════════════════════
+PHASE 1: CUTOVER WINDOW BEGINS (Schedule: Low-traffic time, e.g., 2-4 AM)
+════════════════════════════════════════════════════════════════════════════════════════════════
+
+Step 1: Enable Maintenance Mode (T+0 min)
+
+  # Serve maintenance page instead of app
+  # If using nginx:
+  nginx -s reload  # (configure with maintenance.html)
+  
+  # Monitor: Verify users see maintenance page
+  curl https://app.example.com  # Should show maintenance page
+
+  # Notify team: "Maintenance mode enabled, beginning deployment"
+  # Slack: #ops channel notification
+
+Step 2: Disable Traffic to Backend (T+1 min)
+
+  # Health checks will fail, so load balancer removes backend from rotation
+  # If using Kubernetes:
+  kubectl scale deployment intelliresume-backend --replicas=0
+  
+  # If using AWS ASG:
+  aws autoscaling set-desired-capacity --auto-scaling-group-name prod-backend \
+    --desired-capacity 0
+  
+  # Wait for active requests to drain (max 30 seconds)
+  sleep 30
+  
+  # Verify: No traffic reaching backend
+  tail -f /var/log/nginx/access.log  # Should show 503 responses only
+
+Step 3: Stop Background Workers (T+2 min)
+
+  # Stop ARQ workers to prevent race conditions
+  # ssh into worker server
+  
+  # Kill gracefully (give 10 seconds to finish)
+  systemctl stop intelliresume-worker
+  sleep 10
+  
+  # Verify stopped
+  pgrep -f "arq" || echo "Workers stopped"
+
+Step 4: Database Migration (T+3 min)
+
+  ⚠️  CRITICAL STEP - Handle with care
+
+  # Connect to production database
+  psql -h prod-db.example.com -U admin -d intelliresume_prod
+  
+  # Check current version
+  SELECT * FROM schema_version ORDER BY version DESC LIMIT 1;
+  # Example output: version | 24 | 2025-04-07 10:00:00
+  
+  # Run pending migrations
+  # MIGRATION_001_add_revenue_columns.sql (already run in schema setup)
+  # So likely: No migrations needed for v2.0 (schema already prepared in staging)
+  
+  # If migrations exist, run them in order:
+  \i migrations/001_add_revenue_columns.sql
+  \i migrations/002_add_indexes.sql
+  # Wait for each to complete
+  
+  # Verify migrations applied
+  SELECT * FROM schema_version ORDER BY version DESC LIMIT 5;
+  # Should show latest migrations completed
+  
+  # Verify data integrity
+  SELECT COUNT(*) FROM analysis_results;  # Should be >0 if existing data
+  SELECT COUNT(*) FROM users;
+  
+  ✓ Checkpoint: If any errors, STOP and rollback database to backup
+
+Step 5: Deploy Backend Code (T+5-10 min)
+
+  # Copy new code to production
+  # Option A: Git pull (if using git)
+  ssh production-backend
+  cd /opt/intelliresume
+  git fetch origin
+  git checkout v2.0.0  # Use tag, not branch
+  
+  # Option B: Extract from archive (safer)
+  tar -xzf backend-production.tar.gz
+  
+  # Install dependencies
+  python3 -m venv venv
+  source venv/bin/activate
+  pip install -r requirements.txt
+  
+  # Verify: Quick syntax check
+  python3 -m py_compile backend/main.py
+  python3 -m py_compile backend/services/__init__.py
+  
+  # Verify: Test imports
+  python3 -c "from backend.main import app; print('✓ Import successful')"
+  
+  ✓ Checkpoint: If errors, stop and investigate
+
+Step 6: Start Backend (T+11-12 min)
+
+  # Start backend with new code
+  systemctl start intelliresume-backend
+  
+  # Wait for startup (check logs)
+  sleep 5
+  journalctl -u intelliresume-backend -n 20
+  # Should show: "Uvicorn running on 0.0.0.0:8000"
+  
+  # Health check (local traffic only, before re-enabling)
+  curl http://localhost:8000/health
+  # Expected: {"status":"ok","service":"IntelliResume AI","version":"2.0.0"}
+  
+  ✓ Checkpoint: Backend must be healthy before proceeding
+
+Step 7: Start Background Workers (T+13 min)
+
+  # Restart ARQ workers
+  systemctl start intelliresume-worker
+  sleep 3
+  
+  # Verify running
+  journalctl -u intelliresume-worker -n 10
+  # Should show: "ARQ worker started"
+
+Step 8: Deploy Frontend (T+14-15 min)
+
+  # Option A: S3 + CloudFront
+  aws s3 sync frontend/dist s3://prod-cdn/
+  # CloudFront cache invalidation
+  aws cloudfront create-invalidation --distribution-id XXXX --paths "/*"
+  
+  # Option B: Direct nginx
+  scp -r frontend/dist/* production-cdn:/var/www/html/
+  nginx -t  # Verify config
+  nginx -s reload
+  
+  # Verify: Check a few assets load
+  curl -I https://app.example.com/index.html  # Should be 200
+  curl -I https://app.example.com/assets/main.js  # Should be 200
+
+Step 9: Enable Traffic (T+16 min)
+
+  # Re-enable backend in load balancer
+  
+  # If using Kubernetes:
+  kubectl scale deployment intelliresume-backend --replicas=3
+  
+  # If using AWS ASG:
+  aws autoscaling set-desired-capacity --auto-scaling-group-name prod-backend \
+    --desired-capacity 2
+  
+  # Wait for health checks to pass
+  sleep 15
+  
+  # Verify: Load balancer has healthy backends
+  aws elbv2 describe-target-health --target-group-arn arn:aws:... \
+    | grep HealthyHostCount
+
+Step 10: Disable Maintenance Mode (T+18 min)
+
+  # Serve app instead of maintenance page
+  nginx -s reload  # (reconfigure to serve app)
+  
+  # Verify: Can access app
+  curl https://app.example.com/  # Should return HTML (not maintenance page)
+  
+  # ✓ DEPLOYMENT COMPLETE!
+
+════════════════════════════════════════════════════════════════════════════════════════════════
+PHASE 2: POST-DEPLOYMENT VALIDATION (T+18 to T+48 min)
+════════════════════════════════════════════════════════════════════════════════════════════════
+
+Immediate Tests (First 5 minutes):
+
+  ☐ Login works (visit app, create/login account)
+  ☐ Upload resume - doesn't error
+  ☐ Provide JD - doesn't error
+  ☐ Click analyze - submits successfully
+  ☐ Results return (<5 second wait)
+  ☐ All data displays (keywords, skill gaps, score, etc.)
+  ☐ Try to upgrade - Stripe modal loads (DON'T complete payment yet)
+  ☐ Browser console: No JavaScript errors (F12)
+  ☐ Backend logs: No error spam (check logs)
+
+Monitoring Validation (First 15 minutes):
+
+  ☐ Error rate is low (<0.5%) - check monitoring dashboard
+  ☐ API response times normal (<500ms avg)
+  ☐ Backend CPU usage normal (<50%)
+  ☐ Memory usage stable (not growing)
+  ☐ Database connections normal (not exhausted)
+  ☐ No failed payments (check Stripe dashboard)
+  ☐ Web traffic increasing (users arriving)
+  ☐ No unusual error patterns in logs
+
+Full Validation (First hour):
+
+  ☐ Repeat tests with different resume samples
+  ☐ Test upgrade flow completely (use test Stripe card 4242...)
+  ☐ Verify user tier updates after payment
+  ☐ Premium features unlock correctly
+  ☐ Mobile responsive (test on phone/tablet)
+  ☐ Full frontend + backend round-trip with real users
+  
+  If ANY test fails → EXECUTE ROLLBACK PROCEDURE (see below)
+
+Example Validation Command:
+
+  python3 << 'EOF'
+  import requests
+  import json
+  
+  BASE_URL = "https://app.example.com"
+  
+  # Test 1: Health
+  resp = requests.get(f"{BASE_URL}/api/health")
+  assert resp.status_code == 200, f"Health check failed: {resp.status_code}"
+  print("✓ Health check passed")
+  
+  # Test 2: Analysis endpoint
+  with open('test_resume.txt', 'r') as f:
+      resume = f.read()
+  with open('test_jd.txt', 'r') as f:
+      jd = f.read()
+  
+  resp = requests.post(
+      f"{BASE_URL}/api/analyze/comprehensive",
+      files={
+          'resume': ('resume.txt', resume),
+          'job_description': ('jd.txt', jd)
+      },
+      headers={'Authorization': 'Bearer your-token'}
+  )
+  assert resp.status_code == 202, f"Analysis failed: {resp.status_code}"
+  session_id = resp.json()['session_id']
+  print(f"✓ Analysis submitted: {session_id}")
+  
+  # Test 3: Poll for results
+  import time
+  for i in range(30):
+      resp = requests.get(
+          f"{BASE_URL}/api/analysis/{session_id}/status",
+          headers={'Authorization': 'Bearer your-token'}
+      )
+      if resp.json()['status'] == 'completed':
+          data = resp.json()['results']
+          assert 'keywords' in data, "Missing keywords in response"
+          assert 'ats_score' in data, "Missing ATS score"
+          print("✓ Analysis completed with all required fields")
+          break
+      time.sleep(1)
+  else:
+      raise Exception("Analysis timed out")
+  
+  print("\n[✓] ALL VALIDATION TESTS PASSED - Production deployment successful!")
+  EOF
+
+════════════════════════════════════════════════════════════════════════════════════════════════
+PHASE 3: ROLLBACK PROCEDURE (If Something Goes Wrong)
+════════════════════════════════════════════════════════════════════════════════════════════════
+
+IF TESTS ARE FAILING:
+
+  Option 1: Quick Backend Rollback (Code issue)
+  
+    # Stop current backend
+    systemctl stop intelliresume-backend
+    
+    # Restore previous code
+    cd /opt/intelliresume
+    git checkout v1.9.0  # Previous working version
+    # OR
+    tar -xzf backend-previous.tar.gz
+    
+    # Restart
+    systemctl start intelliresume-backend
+    sleep 5
+    curl http://localhost:8000/health  # Verify
+    
+    # Re-enable in load balancer
+    # (Traffic should flow back automatically)
+
+  Option 2: Database Rollback (Schema issue)
+  
+    ⚠️  CRITICAL - DO ONLY IF MIGRATIONS FAILED
+    
+    # Stop backend immediately
+    systemctl stop intelliresume-backend
+    systemctl stop intelliresume-worker
+    
+    # Kill all database connections
+    psql -h prod-db.example.com -d intelliresume_prod << 'EOF'
+    SELECT pg_terminate_backend(pid) FROM pg_stat_activity 
+      WHERE datname = 'intelliresume_prod' AND pid <> pg_backend_pid();
+    EOF
+    
+    # Drop current database
+    dropdb -h prod-db.example.com -U admin intelliresume_prod
+    
+    # Restore from backup
+    createdb -h prod-db.example.com -U admin intelliresume_prod
+    gunzip -c intelliresume_prod_backup_*.sql.gz | \
+      psql -h prod-db.example.com -U admin intelliresume_prod
+    
+    # Verify restore
+    psql -h prod-db.example.com -U admin -c \
+      "SELECT COUNT(*) FROM analysis_results;"
+    
+    # Restart backend
+    systemctl start intelliresume-backend
+    systemctl start intelliresume-worker
+
+  Option 3: Full Cutover Rollback (Complete failure)
+  
+    # 1. Serve maintenance page
+    nginx -s reload  # (maintenance.html config)
+    
+    # 2. Stop all services
+    systemctl stop intelliresume-backend
+    systemctl stop intelliresume-worker
+    
+    # 3. Restore previous frontend
+    aws s3 sync s3://prod-cdn-backup-v1.9/ s3://prod-cdn/
+    aws cloudfront create-invalidation --distribution-id XXXX --paths "/*"
+    # OR
+    scp -r previous-frontend-build/* production-cdn:/var/www/html/
+    
+    # 4. Restore previous backend code
+    git checkout v1.9.0
+    systemctl start intelliresume-backend
+    systemctl start intelliresume-worker
+    
+    # 5. Disable maintenance mode
+    nginx -s reload  # (serve app again)
+    
+    # 6. Validate old version is working
+    curl https://app.example.com  # Should return app (not errors)
+    
+    # 7. Notify team
+    # "Deployment rolled back to v1.9.0 due to issues"
+    # "Investigating failure cause"
+
+════════════════════════════════════════════════════════════════════════════════════════════════
+POST-DEPLOYMENT MONITORING (First 24 Hours)
+════════════════════════════════════════════════════════════════════════════════════════════════
+
+First 1 hour:
+  ☐ Monitor dashboard continuously (someone on-call watching)
+  ☐ Check error logs every 5 minutes
+  ☐ Monitor payment success rate
+  ☐ Track user login success rate
+  ☐ Verify no unusual database queries (slow query log)
+
+First 6 hours:
+  ☐ Continue monitoring (at least 1 person watching)
+  ☐ Monitor for spikes in error rate
+  ☐ Check for database growth (unusual inserts/deletes)
+  ☐ Verify backend response times remain stable
+  ☐ Check CPU/memory trends
+
+First 24 hours:
+  ☐ Gradually reduce monitoring frequency
+  ☐ Check health metrics at 6h, 12h, 24h marks
+  ☐ Verify automated backups completed
+  ☐ Review analytics (user logins, analysis count)
+  ☐ Review payment processing metrics
+
+Key Metrics to Watch:
+
+  API Error Rate: Target <0.5%
+    └─ Alert if: >1% for 5 minutes
+    
+  Response Time (p95): Target <500ms
+    └─ Alert if: >2000ms for 5 minutes
+    
+  Database Connections: Target <50 of 100
+    └─ Alert if: >80 connections
+    
+  Disk Space: Target >20% free
+    └─ Alert if: <10% free
+    
+  Memory Usage: Target <70%
+    └─ Alert if: >85% for 10 minutes
+    
+  Payment Success Rate: Target >99%
+    └─ Alert if: <95%
+    
+  Stripe Webhook Processing: Target <1s
+    └─ Alert if: >5s
+
+═══════════════════════════════════════════════════════════════════════════════════════════════
+PRODUCTION SIGN-OFF
+═══════════════════════════════════════════════════════════════════════════════════════════════
+
+After successful validation, sign off:
+
+  ☐ Deployment Date/Time: __________
+  ☐ Version Deployed: 2.0.0
+  ☐ Deployed By: __________
+  ☐ Reviewed By: __________ (code review)
+  ☐ Approved By: __________ (tech lead)
+  ☐ Validated By: __________ (QA/monitoring)
+  
+  ☐ All tests passed: YES / NO
+  ☐ Rollback executed: YES / NO
+  ☐ Monitoring active: YES / NO
+  ☐ Oncall notified: YES / NO
+  
+  Notes:
+  _________________________________________________________________
+  _________________________________________________________________
+
+═══════════════════════════════════════════════════════════════════════════════════════════════
+
+USEFUL COMMANDS & QUERIES
+
+# Monitor backend
+journalctl -u intelliresume-backend -f -n 50
+
+# Monitor worker
+journalctl -u intelliresume-worker -f -n 50
+
+# Check database size
+psql intelliresume_prod -c "SELECT pg_size_pretty(pg_database_size('intelliresume_prod'));"
+
+# Count analysis results
+psql intelliresume_prod -c "SELECT COUNT(*) FROM analysis_results;"
+
+# Check backups
+aws s3 ls s3://your-backups/ | tail -10
+
+# Monitor errors in logs
+grep -i error /var/log/intelliresume/*.log | tail -20
+
+# Check API response times
+curl -w '@curl-format.txt' -o /dev/null -s https://app.example.com/api/health
+
+# Verify Stripe keys (not test mode)
+curl https://api.stripe.com/v1/account -u sk_live_XXXXX:
+
+═══════════════════════════════════════════════════════════════════════════════════════════════
+
+Generated: 2025-04-07
+Version: 2.0.0
+Status: READY FOR PRODUCTION DEPLOYMENT
+
+═══════════════════════════════════════════════════════════════════════════════════════════════

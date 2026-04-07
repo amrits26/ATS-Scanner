@@ -10,6 +10,16 @@ export interface ATSScoreResponse {
   final_ats_score: number;
   missing_keywords: string[];
   recommended_keywords_to_add: string[];
+  // Phase 6: Credibility Layer
+  percentile_rank?: number; // 0-100, where user ranks
+  confidence_score?: number; // 0-100, confidence in score
+  algorithm_breakdown?: Record<string, number>; // {"keywords": 40, "format": 30, ...}
+  keyword_impact_data?: Array<{
+    keyword: string;
+    impact_percent: number;
+    confidence: number;
+    jd_frequency?: number;
+  }>;
 }
 
 export interface JobDescriptionAnalysis {
@@ -72,4 +82,16 @@ export interface ComprehensiveAnalysisResult {
   keyword_heatmap: KeywordHeatmapData;
   writing_feedback: WritingFeedback | null;
   chart_paths: Record<string, string>;
+}
+
+export type UserTierEnum = "free" | "pro";
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  full_name?: string;
+  tier: UserTierEnum;
+  scans_this_month: number;
+  scan_limit: number;
+  created_at: string;
 }

@@ -1,0 +1,45 @@
+{
+  "mae": 33.33,
+  "accuracy": 0.0,
+  "passed": 0,
+  "total": 6,
+  "results": [
+    {
+      "predicted": 50,
+      "expected": 85,
+      "error": 35,
+      "passed": false
+    },
+    {
+      "predicted": 50,
+      "expected": 15,
+      "error": 35,
+      "passed": false
+    },
+    {
+      "predicted": 50,
+      "expected": 20,
+      "error": 30,
+      "passed": false
+    },
+    {
+      "predicted": 50,
+      "expected": 78,
+      "error": 28,
+      "passed": false
+    },
+    {
+      "predicted": 50,
+      "expected": 82,
+      "error": 32,
+      "passed": false
+    },
+    {
+      "predicted": 50,
+      "expected": 10,
+      "error": 40,
+      "passed": false
+    }
+  ],
+  "status": "\u274c NEEDS WORK"
+}

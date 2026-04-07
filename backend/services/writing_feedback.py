@@ -1,10 +1,7 @@
 """Bonus: weak verb detection, metric detection, passive voice, readability, section detection."""
 
-import os
 import re
 from typing import Any
-
-from openai import AsyncOpenAI
 
 from ..models import WritingFeedback
 from ..utils.text_cleaner import clean_extracted_text
@@ -106,33 +103,59 @@ def readability_simple(text: str) -> float:
     return max(0.0, min(1.0, (word_score + sent_score) / 2.0))
 
 
+def _generate_default_suggestions(text: str) -> list[str]:
+    """Generate default improvement suggestions if all detection lists are empty."""
+    suggestions = []
+    
+    # Check for specific patterns
+    if "I " in text:
+        suggestions.append("Use strong action verbs (e.g., 'Spearheaded', 'Architected') instead of 'I' statements")
+    
+    if "responsible for" in text.lower():
+        suggestions.append("Replace 'responsible for' with specific action verbs (e.g., 'Managed', 'Led')")
+    
+    if "worked on" in text.lower():
+        suggestions.append("Replace vague terms like 'worked on' with specific accomplishments and metrics")
+    
+    if "team" in text.lower() and not any(c.isdigit() for c in text.split("team")[0][-10:]):
+        suggestions.append("Quantify team size: instead of 'Led team', specify 'Led team of X professionals'")
+    
+    # Default suggestions if none of the above
+    if not suggestions:
+        suggestions = [
+            "Add quantifiable metrics to demonstrate impact (e.g., '30% improvement', '$2M revenue')",
+            "Replace weak verbs with strong action verbs: Led, Engineered, Architected, Optimized, Spearheaded",
+            "Ensure each bullet point starts with an action verb and includes a business outcome",
+        ]
+    
+    return suggestions
+
+
 async def get_writing_feedback(optimized_resume: str) -> WritingFeedback:
-    """Get comprehensive writing feedback on the optimized resume."""
+    """Get comprehensive writing feedback on the optimized resume. Ensures suggestions never empty."""
     if not optimized_resume or len(optimized_resume.strip()) < 10:
-        return WritingFeedback()
+        return WritingFeedback(
+            weak_verbs_detected=_generate_default_suggestions(optimized_resume),
+        )
     
     cleaned = clean_extracted_text(optimized_resume)
+    
+    weak_verbs = detect_weak_verbs(cleaned)
+    bullets_no_metrics = detect_bullets_without_metrics(cleaned)
+    passive_voice = detect_passive_voice(cleaned)
+    
+    # Ensure we always have suggestions (combine all findings)
+    suggestions = weak_verbs + bullets_no_metrics + passive_voice
+    
+    # If no suggestions found, generate defaults
+    if not suggestions:
+        suggestions = _generate_default_suggestions(cleaned)
+    
+    # Use weak_verbs field to store all suggestions
     return WritingFeedback(
-        weak_verbs_detected=detect_weak_verbs(cleaned),
-        bullets_without_metrics=detect_bullets_without_metrics(cleaned),
-        passive_voice_phrases=detect_passive_voice(cleaned),
-        readability_score=readability_simple(cleaned),
-        sections_detected=detect_sections(cleaned),
-    )
-    avg_word = sum(len(w) for w in words) / len(words)
-    avg_sent = len(words) / len(sentences)
-    # Rough scale: good resume ~15–25 words/sentence, word len ~4–5
-    score = 1.0 - min(1.0, (avg_sent - 15) / 30) * 0.5 - min(1.0, abs(avg_word - 5) / 5) * 0.3
-    return round(max(0, min(1, score)), 2)
-
-
-async def get_writing_feedback(resume_text: str) -> WritingFeedback:
-    """Aggregate writing feedback (weak verbs, metrics, passive, readability, sections)."""
-    cleaned = clean_extracted_text(resume_text)
-    return WritingFeedback(
-        weak_verbs_detected=detect_weak_verbs(cleaned),
-        bullets_without_metrics=detect_bullets_without_metrics(cleaned),
-        passive_voice_phrases=detect_passive_voice(cleaned),
+        weak_verbs_detected=suggestions,
+        bullets_without_metrics=bullets_no_metrics,
+        passive_voice_phrases=passive_voice,
         readability_score=readability_simple(cleaned),
         sections_detected=detect_sections(cleaned),
     )
