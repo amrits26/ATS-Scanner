@@ -1042,6 +1042,7 @@ function App() {
                 <ResumeComparison 
                   original={result?.original_resume || ""} 
                   optimized={result?.optimized_resume || ""} 
+                  isFreePreview={user?.tier !== "pro"}
                 />
                 <div className="mt-6 flex gap-3">
                   <button

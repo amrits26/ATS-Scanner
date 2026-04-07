@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { Lock } from 'lucide-react';
 
 interface ResumeComparisonProps {
   original: string;
   optimized: string;
+  isFreePreview?: boolean;
 }
 
 // Utility function to compute simple word-level diff
@@ -35,10 +37,32 @@ function computeWordDiff(original: string, optimized: string): { type: string; t
   return diff;
 }
 
-export function ResumeComparison({ original, optimized }: ResumeComparisonProps) {
+export function ResumeComparison({ original, optimized, isFreePreview = false }: ResumeComparisonProps) {
   const [viewMode, setViewMode] = useState<"side-by-side" | "track-changes">("side-by-side");
   const wordDiff = computeWordDiff(original, optimized);
   
+  // If free tier with no/minimal optimized content, show upgrade prompt
+  if (isFreePreview && (!optimized || optimized.length < 50)) {
+    return (
+      <div className="bg-gradient-to-r from-amber-900/30 to-amber-800/20 rounded-xl p-8 text-center border border-amber-600/50">
+        <div className="flex justify-center mb-4">
+          <Lock className="w-12 h-12 text-amber-400" />
+        </div>
+        <h3 className="text-xl font-bold text-white mb-2">Unlock Your Optimized Resume</h3>
+        <p className="text-amber-200/80 mb-6 max-w-md mx-auto">
+          Upgrade to Pro to see the complete, keyword-rich rewrite of your resume tailored to this job description. Our AI will optimize every section for maximum ATS compatibility.
+        </p>
+        <a
+          href="/pricing"
+          className="inline-block bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold px-8 py-3 rounded-lg transition-all transform hover:scale-105 shadow-lg"
+        >
+          Upgrade Now – From $5/month
+        </a>
+      </div>
+    );
+  }
+  
+  // Normal rendering for Pro users or when preview exists
   return (
     <div className="space-y-4">
       {/* Toolbar */}

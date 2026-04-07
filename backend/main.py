@@ -693,7 +693,7 @@ async def get_analysis_status(
 
             # Gate the result based on user tier
             if user and user.tier.value == "free":
-                # FREE tier: show only top 3 keywords as tease, lock the rest
+                # FREE tier: show preview of optimized resume (first 500 chars) to drive upgrade
                 free_keywords = KeywordHeatmapData()
                 if full_result.keyword_heatmap and full_result.keyword_heatmap.keywords:
                     # Show only first 3 keywords to free users
@@ -701,18 +701,22 @@ async def get_analysis_status(
                     free_keywords.frequencies = full_result.keyword_heatmap.frequencies[:3] if full_result.keyword_heatmap.frequencies else []
                     free_keywords.importance_scores = full_result.keyword_heatmap.importance_scores[:3] if full_result.keyword_heatmap.importance_scores else []
                 
-                # FREE tier: strip sensitive fields
+                # Keep a preview of optimized resume (first 500 chars) to show value
+                optimized_preview = full_result.optimized_resume[:500] + ("…" if len(full_result.optimized_resume) > 500 else "") if full_result.optimized_resume else ""
+                
+                # FREE tier: gated fields, but keep some data to enable engagement
                 try:
                     gated_result = ComprehensiveAnalysisResult(
-                        original_resume="",  # Strip
-                        optimized_resume="",  # Strip
-                        ats_score=full_result.ats_score,
-                        jd_analysis=JobDescriptionAnalysis(),  # Strip
-                        skill_gap=None,  # Strip (gated)
-                        resume_quality=None,  # Strip (gated)
+                        original_resume="",  # Still strip to save bandwidth
+                        optimized_resume=optimized_preview,  # Show preview (first 500 chars)
+                        ats_score=full_result.ats_score,  # Show full ATS score
+                        jd_analysis=full_result.jd_analysis,  # Show JD analysis (all skills/tools visible)
+                        skill_gap=full_result.skill_gap,  # Show skill gap to drive upgrade
+                        resume_quality=full_result.resume_quality,  # Show quality score to drive upgrade
                         keyword_heatmap=free_keywords,  # Show only 3 free keywords
-                        writing_feedback=None,  # Strip (gated)
+                        writing_feedback=full_result.writing_feedback,  # Show writing feedback
                         chart_paths={},  # No charts for free
+                        is_free_tier_preview=True,  # Flag for frontend
                     )
                     response.result = gated_result
                 except Exception as gate_error:

@@ -111,6 +111,7 @@ class ComprehensiveAnalysisResult(BaseModel):
     keyword_heatmap: KeywordHeatmapData | None = Field(default=None)  # Can be None for free users
     writing_feedback: WritingFeedback | None = None
     chart_paths: dict[str, str] = Field(default_factory=dict)
+    is_free_tier_preview: bool = False  # Flag to indicate gated content
 
 
 # =============================================================================
