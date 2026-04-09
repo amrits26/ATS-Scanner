@@ -1,0 +1,109 @@
+name: Test Suite
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: '0 0 * * *' # Daily at midnight
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov pytest-mock
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+        run: |
+          # Create test DB schema
+          psql postgresql://postgres:postgres@localhost:5432/test_db < backend/migrations/001_init.sql
+          psql postgresql://postgres:postgres@localhost:5432/test_db < backend/migrations/002_phase2_revenue_fortress.sql
+
+      - name: Run pytest with coverage
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+          GOOGLE_API_KEY: test_key_${{ github.run_id }}
+          RESEND_API_KEY: test_key_${{ github.run_id }}
+        run: |
+          pytest backend/tests/ -v --cov=backend --cov-report=xml --cov-report=term --tb=short
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install linting tools
+        run: |
+          pip install black flake8 isort mypy
+
+      - name: Run black
+        run: black backend/ --check
+
+      - name: Run flake8
+        run: flake8 backend/ --max-line-length=100
+
+      - name: Run isort
+        run: isort backend/ --check-only
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Check for secrets
+        run: |
+          if grep -r "sk-" backend/ frontend/ --include="*.py" --include="*.ts" --include="*.tsx"; then
+            echo "⚠️ Possible API keys found in code!"
+            exit 1
+          fi

@@ -34,3 +34,19 @@ slowapi>=0.1.9
 pillow>=10.0.0
 httpx>=0.25.0
 posthog>=3.0.0
+
+# --- Phase 2 & 3: AI Agents, Job Scraping ---
+trafilatura>=1.12.0
+fake-useragent>=1.4.0
+beautifulsoup4>=4.12.0
+pytz>=2024.1
+
+# --- Phase 3D: Analytics & Async HTTP ---
+aiohttp>=3.9.0
+scipy>=1.10.0
+numpy>=1.24.0
+pandas>=2.0.0
+
+# --- Frontend Charts (Recharts integration via API) ---
+python-dateutil>=2.8.0
+

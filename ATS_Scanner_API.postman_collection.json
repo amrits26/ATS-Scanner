@@ -1,0 +1,406 @@
+{
+  "info": {
+    "name": "ATS Scanner API - Phase 1, 2 & 3",
+    "_postman_id": "ats-scanner-complete",
+    "description": "Complete API collection for ATS Scanner including email nudges, AI agents, and interview marketplace",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Phase 1: Email Nudges",
+      "item": [
+        {
+          "name": "Trigger Fear Email (Manual)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 or 202', function() {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 202]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"analysis_id\": \"test-analysis-123\",\n  \"score\": 72,\n  \"missing_keywords\": [\"Python\", \"AWS\", \"Docker\"]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/nudge/fear",
+              "host": ["{{base_url}}"],
+              "path": ["api", "nudge", "fear"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Phase 2: AI Agents",
+      "item": [
+        {
+          "name": "Resume Coach",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Response includes session_id', function() {",
+                  "  var jsonData = pm.response.json();",
+                  "  pm.expect(jsonData).to.have.property('session_id');",
+                  "});",
+                  "pm.test('Response includes execution time', function() {",
+                  "  var jsonData = pm.response.json();",
+                  "  pm.expect(jsonData).to.have.property('execution_time_seconds');",
+                  "});",
+                  "pm.test('Execution time is reasonable', function() {",
+                  "  var jsonData = pm.response.json();",
+                  "  pm.expect(jsonData.execution_time_seconds).to.be.below(60);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"How can I improve my bullet points for a senior role?\",\n  \"resume_text\": \"Senior Software Engineer with 7 years at Google. Worked on distributed systems, led team of 5. Proficient in Python, Go, Java. Experience with AWS, Kubernetes, Docker.\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/agent/coach",
+              "host": ["{{base_url}}"],
+              "path": ["api", "agent", "coach"]
+            }
+          }
+        },
+        {
+          "name": "Auto-Tailor Resume",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Returns match score 0-100', function() {",
+                  "  var jsonData = pm.response.json();",
+                  "  pm.expect(jsonData.match_score).to.be.below(101);",
+                  "  pm.expect(jsonData.match_score).to.be.above(-1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resume_text\": \"Senior Software Engineer at Google. Built ML infrastructure. Python, Go, experience with Kubernetes.\",\n  \"jd_text\": \"Senior ML Engineer needed. Required: Python, TensorFlow, SQL. Nice to have: Kubernetes, gRPC.\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/agent/tailor",
+              "host": ["{{base_url}}"],
+              "path": ["api", "agent", "tailor"]
+            }
+          }
+        },
+        {
+          "name": "Interview Prep",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Returns questions object', function() {",
+                  "  var jsonData = pm.response.json();",
+                  "  pm.expect(jsonData).to.have.property('questions');",
+                  "});",
+                  "pm.test('Questions have expected categories', function() {",
+                  "  var jsonData = pm.response.json();",
+                  "  var q = jsonData.questions;",
+                  "  pm.expect(Object.keys(q).length).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"job_title\": \"Senior Software Engineer\",\n  \"company\": \"Google\",\n  \"resume_text\": \"Led ML infrastructure team at previous company\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/agent/interview-prep",
+              "host": ["{{base_url}}"],
+              "path": ["api", "agent", "interview-prep"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Phase 3: Interview Marketplace",
+      "item": [
+        {
+          "name": "Submit Interview Experience",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company\": \"Google\",\n  \"role\": \"Senior Software Engineer\",\n  \"questions\": [\n    {\n      \"question\": \"Design a distributed cache system\",\n      \"answer\": \"I would use Redis with consistent hashing...\"\n    },\n    {\n      \"question\": \"Tell me about yourself\",\n      \"answer\": \"I have 7 years of experience...\"\n    },\n    {\n      \"question\": \"Why Google?\",\n      \"answer\": \"I'm excited about working on...\"\n    }\n  ],\n  \"outcome\": \"offer\",\n  \"difficulty\": 4\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/interviews/submit",
+              "host": ["{{base_url}}"],
+              "path": ["api", "interviews", "submit"]
+            }
+          }
+        },
+        {
+          "name": "Get Company Questions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/interviews/Google?role=Senior%20Software%20Engineer&limit=10",
+              "host": ["{{base_url}}"],
+              "path": ["api", "interviews", "Google"],
+              "query": [
+                {
+                  "key": "role",
+                  "value": "Senior Software Engineer"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get My Interview History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/interviews/user/history",
+              "host": ["{{base_url}}"],
+              "path": ["api", "interviews", "user", "history"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Phase 3: Trending Skills",
+      "item": [
+        {
+          "name": "Get Current Trending Skills",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Returns array of skills', function() {",
+                  "  var jsonData = pm.response.json();",
+                  "  pm.expect(Array.isArray(jsonData.trending_skills)).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/trending-skills/current?limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["api", "trending-skills", "current"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Skill Percentile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/trending-skills/percentile?skill=Python",
+              "host": ["{{base_url}}"],
+              "path": ["api", "trending-skills", "percentile"],
+              "query": [
+                {
+                  "key": "skill",
+                  "value": "Python"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Skill Trend Chart",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/trending-skills/chart?skill=Python&months=6",
+              "host": ["{{base_url}}"],
+              "path": ["api", "trending-skills", "chart"],
+              "query": [
+                {
+                  "key": "skill",
+                  "value": "Python"
+                },
+                {
+                  "key": "months",
+                  "value": "6"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Upskilling Recommendations",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/trending-skills/recommendations",
+              "host": ["{{base_url}}"],
+              "path": ["api", "trending-skills", "recommendations"]
+            }
+          }
+        },
+        {
+          "name": "Get Market Insights",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/trending-skills/market-insights",
+              "host": ["{{base_url}}"],
+              "path": ["api", "trending-skills", "market-insights"]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "your_jwt_token_here",
+      "type": "string"
+    }
+  ]
+}

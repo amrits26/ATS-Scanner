@@ -629,3 +629,108 @@ class UserPreferences(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
     )
+
+
+# ============================================================================
+# PHASE 1: EMAIL AUTOMATION MODELS
+# ============================================================================
+
+class NudgeTracking(Base):
+    """Track all nudge emails (fear, abandoned, digest)"""
+    __tablename__ = "nudge_tracking"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    analysis_session_id = Column(String(255), nullable=False)
+    
+    nudge_type = Column(String(50), nullable=False)  # 'fear', 'abandoned', 'digest'
+    
+    scheduled_at = Column(DateTime(timezone=True))
+    sent_at = Column(DateTime(timezone=True))
+    opened_at = Column(DateTime(timezone=True))
+    clicked_at = Column(DateTime(timezone=True))
+    converted_at = Column(DateTime(timezone=True))
+    
+    email_subject = Column(Text)
+    template_id = Column(String(100))
+    
+    gemini_cost_cents = Column(Integer, default=0)
+    resend_cost_cents = Column(Integer, default=1)
+    
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class GeminiCostLog(Base):
+    """Track all Gemini API calls for cost monitoring"""
+    __tablename__ = "gemini_cost_log"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    operation_type = Column(String(50), index=True)
+    tokens_input = Column(Integer)
+    tokens_output = Column(Integer)
+    cost_cents = Column(Integer)
+    
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    session_id = Column(String(255))
+    error_message = Column(Text)
+    
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+
+
+# ============================================================================
+# PHASE 2: AI AGENT MODELS
+# ============================================================================
+
+class AgentExecution(Base):
+    """Track all agent runs"""
+    __tablename__ = "agent_executions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    agent_type = Column(String(50), index=True)  # 'coach', 'tailor', 'interview'
+    session_id = Column(String(255), index=True)
+    user_goal = Column(Text)
+    tools_called = Column(JSONB, default={})
+    
+    execution_time_seconds = Column(Integer)
+    gemini_input_tokens = Column(Integer, default=0)
+    gemini_output_tokens = Column(Integer, default=0)
+    gemini_cost_cents = Column(Integer, default=0)
+    
+    user_rating = Column(Integer)  # 1-5
+    feedback_text = Column(Text)
+    error_message = Column(Text)
+    
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+
+
+class AgentSubscription(Base):
+    """Track user access to agents"""
+    __tablename__ = "agent_subscriptions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    agent_type = Column(String(50))  # 'coach', 'tailor', 'interview'
+    tier_level = Column(String(50), default="free")  # 'free', 'pro', 'pro_max'
+    
+    sessions_remaining = Column(Integer, default=1)  # -1 = unlimited
+    last_reset_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    expires_at = Column(DateTime(timezone=True))
+    
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class JobDescriptionCache(Base):
+    """Cache scraped JDs to avoid re-scraping"""
+    __tablename__ = "job_description_cache"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    url_hash = Column(String(64), unique=True, index=True)
+    url = Column(Text)
+    job_description = Column(Text)
+    source = Column(String(50))
+    
+    scraped_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    expires_at = Column(DateTime(timezone=True))
+

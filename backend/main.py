@@ -78,7 +78,7 @@ from .services.resume_parser import extract_resume_text
 from .services import stripe_service
 from .services.recruiter_service import add_high_score_candidate_to_queue
 from .jobs import queue_analysis_job, update_analysis_progress, run_analysis_job
-from .routes import recruiter
+from .routes import recruiter, agents, interviews, trending_skills, analytics
 
 # Configure logging
 logging.basicConfig(
@@ -166,7 +166,13 @@ CHARTS_DIR.mkdir(parents=True, exist_ok=True)
 # ============================================================================
 # Mount API Routers
 # ============================================================================
+from backend.routes import agents
+
 app.include_router(recruiter.router)
+app.include_router(agents.router)
+app.include_router(interviews.router)
+app.include_router(trending_skills.router)
+app.include_router(analytics.router)
 
 
 # =============================================================================
