@@ -62,7 +62,8 @@ async def calculate_percentile_rank(db: AsyncSession, user_score: int) -> int:
     # Count how many users scored lower
     stmt_lower = select(func.count(AnalysisResult.id)).where(
         AnalysisResult.status == AnalysisStatus.completed,
-        AnalysisResult.final_ats_score < user_score
+        AnalysisResult.final_ats_score.isnot(None),
+        AnalysisResult.final_ats_score < user_score,
     )
     result = await db.execute(stmt_lower)
     lower_count = result.scalar() or 0

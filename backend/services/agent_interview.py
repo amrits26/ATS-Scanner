@@ -6,8 +6,6 @@ import logging
 import json
 from typing import Dict, List, Any
 
-import google.generativeai as genai
-
 from backend.services.agent_base import AIAgent
 
 logger = logging.getLogger(__name__)
@@ -64,11 +62,10 @@ Return JSON:
   "resume_specific": [list]
 }}"""
         
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(prompt)
+        text, usage = await self.call_gemini(prompt, temperature=self.TEMPERATURE_SCORING, json_mode=True)
         
         try:
-            return json.loads(response.text)
+            return json.loads(text)
         except:
             return {"technical": [], "behavioral": [], "culture_fit": [], "resume_specific": []}
 
@@ -99,10 +96,9 @@ Return JSON array:
   }}
 ]"""
         
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        response = model.generate_content(prompt)
+        text, usage = await self.call_gemini(prompt, temperature=self.TEMPERATURE_CREATIVE, json_mode=True)
         
         try:
-            return {"star_answers": json.loads(response.text)}
+            return {"star_answers": json.loads(text)}
         except:
             return {"star_answers": []}

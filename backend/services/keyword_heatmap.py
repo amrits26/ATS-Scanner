@@ -3,6 +3,7 @@
 from collections import Counter
 from ..models import KeywordHeatmapData
 from ..utils.text_cleaner import extract_words, normalize_for_ats
+from .agent_base import TECH_ACRONYM_WHITELIST
 
 
 def _get_stopwords_set() -> set[str]:
@@ -162,7 +163,7 @@ def _get_stopwords_set() -> set[str]:
             "win", "wish", "with", "within", "without", "woman", "wonder",
             "word", "work", "world", "worry", "would", "write", "wrong", "year",
             "yes", "yesterday", "yet", "you", "young", "your", "yours", "yourself",
-            "http", "https", "rest", "json", "xml", "401", "403", "404", "500", "200",
+            "http", "https", "json", "xml", "401", "403", "404", "500", "200",
             "database", "web", "mobile", "software", "system", "application",
             "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
         }
@@ -174,15 +175,16 @@ def _is_high_signal(word: str, stopwords: set[str]) -> bool:
     """
     Aggressive signal filter: only allow high-value skill/keyword tokens.
     Filters out junk, numbers, and low-signal words.
-    
-    Rules:
-    1. Word length must be > 2 (rejects "ai", "qa", "ml")
-    2. Word must NOT be purely numeric (rejects "401", "2", "123")
-    3. Word must NOT be in STOP_WORDS set
-    4. Word must NOT be >40% numeric (rejects "6hr", "24/7", "2023")
+    Now uses shared TECH_ACRONYM_WHITELIST to preserve short but valid skills.
     """
     if not word:
         return False
+    
+    word_lower = word.lower()
+    
+    # Allow known tech acronyms regardless of length (AI, ML, QA, C#, Go, R)
+    if word_lower in TECH_ACRONYM_WHITELIST:
+        return True
     
     # Rule 1: Length check - must be > 2 characters
     if len(word) <= 2:
@@ -193,7 +195,7 @@ def _is_high_signal(word: str, stopwords: set[str]) -> bool:
         return False
     
     # Rule 3: Reject stop words
-    if word.lower() in stopwords:
+    if word_lower in stopwords:
         return False
     
     # Rule 4: Reject if too many digits (>40%)

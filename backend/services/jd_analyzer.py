@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 from ..models import JobDescriptionAnalysis
 from ..utils.text_cleaner import clean_extracted_text
+from .agent_base import TECH_ACRONYM_WHITELIST
 
 # Load environment variables and configure Gemini
 load_dotenv()
@@ -63,7 +64,13 @@ async def analyze_job_description(jd_text: str) -> JobDescriptionAnalysis:
         )
 
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel(
+            'gemini-1.5-flash',
+            generation_config={
+                "temperature": 0.1,
+                "response_mime_type": "application/json",
+            },
+        )
         prompt = SYSTEM_JD + "\n\n" + USER_JD_TEMPLATE.format(jd_text=cleaned[:12000])
         resp = model.generate_content(prompt)
         content = (resp.text or "").strip()
@@ -113,8 +120,8 @@ STOP_WORDS = {
     # Pronouns
     "he", "she", "it", "we", "they", "you", "i", "me", "him", "her", "us",
     "them", "my", "your", "his", "its", "our", "their",
-    # HTTP/API/Junk/Status codes
-    "http", "https", "rest", "json", "xml", "401", "403", "404", "500", "200",
+    # HTTP/API/Junk/Status codes (NOTE: 'rest' removed — it's a valid tech skill)
+    "http", "https", "json", "xml", "401", "403", "404", "500", "200",
     # Resume template garbage
     "ability", "actionable", "actively", "activity", "acumen", "adapt",
     "work", "worked", "working", "job", "jobs", "role", "roles",
@@ -152,8 +159,7 @@ def _is_valid_skill_token(token: str) -> bool:
         return False
     
     # Reject abbreviations that are too short (but allow known technical acronyms)
-    known_acronyms = {"c++", "c#", "qa", "ml", "ai", "ui", "ux", "api", "aws", "gcp", "dba", "sql", "csv", "rpa"}
-    if len(token_clean) <= 2 and token_clean not in known_acronyms:
+    if len(token_clean) <= 2 and token_clean not in TECH_ACRONYM_WHITELIST:
         return False
     
     return True

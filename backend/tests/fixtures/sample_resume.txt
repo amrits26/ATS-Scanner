@@ -1,0 +1,32 @@
+Senior Software Engineer
+
+PROFESSIONAL SUMMARY
+Results-driven software engineer with 5+ years of experience designing and building scalable web applications. Expert in Python, JavaScript, and cloud infrastructure (AWS). Passionate about clean code, continuous delivery, and cross-functional collaboration.
+
+TECHNICAL SKILLS
+Languages: Python, JavaScript, TypeScript, SQL, Go
+Frameworks: FastAPI, Django, React, Node.js
+Cloud: AWS (EC2, S3, Lambda, RDS), Docker, Kubernetes
+Databases: PostgreSQL, Redis, MongoDB
+Tools: Git, CI/CD (GitHub Actions), Terraform, Datadog
+
+PROFESSIONAL EXPERIENCE
+
+Senior Software Engineer | Acme Corp | Jan 2022 - Present
+- Led migration of monolithic Django application to microservices architecture, reducing deploy times by 70%
+- Designed and implemented real-time event processing pipeline handling 50K events per minute using Kafka and Python
+- Mentored 4 junior engineers through code reviews, pair programming, and weekly 1-on-1 sessions
+- Reduced API latency by 40% through Redis caching layer and query optimization
+
+Software Engineer | StartupXYZ | Jun 2019 - Dec 2021
+- Built full-stack features for B2B SaaS platform serving 10K monthly active users
+- Implemented OAuth 2.0 authentication flow with role-based access control
+- Created automated testing pipeline achieving 85% code coverage across Python and React codebases
+- Deployed containerized applications to AWS ECS with blue-green deployment strategy
+
+EDUCATION
+B.S. Computer Science | State University | 2019
+GPA: 3.7/4.0
+
+CERTIFICATIONS
+AWS Solutions Architect Associate | 2023

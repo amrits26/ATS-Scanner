@@ -40,6 +40,7 @@ trafilatura>=1.12.0
 fake-useragent>=1.4.0
 beautifulsoup4>=4.12.0
 pytz>=2024.1
+requests>=2.31.0
 
 # --- Phase 3D: Analytics & Async HTTP ---
 aiohttp>=3.9.0
@@ -49,4 +50,14 @@ pandas>=2.0.0
 
 # --- Frontend Charts (Recharts integration via API) ---
 python-dateutil>=2.8.0
+
+# --- Testing ---
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+
+# --- Phase 7: Semantic Matching & Local Model Inference (Million-Dollar ATS) ---
+sentence-transformers>=2.2.0
+torch>=2.0.0
+transformers>=4.30.0
+httpx[http2]>=0.24.0
 

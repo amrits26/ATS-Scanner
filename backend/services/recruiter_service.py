@@ -281,3 +281,121 @@ async def get_unlocked_candidate(
         "job_title_detected": row[6],
         "resume_full_text": full_resume,
     }
+
+
+# =============================================================================
+# PHASE 3: Recruiter Scarcity Feature (FOMO-based conversion)
+# =============================================================================
+
+async def get_active_candidates_count(
+    db: AsyncSession,
+    recruiter_email: str,
+    skills: Optional[List[str]] = None,
+    location_state: Optional[str] = None,
+    min_score: float = 85,
+) -> Dict[str, Any]:
+    """
+    Return count of active (non-expired) candidates matching filters.
+    Generates scarcity messaging based on count.
+    
+    Args:
+        db: Database session
+        recruiter_email: Current recruiter email
+        skills: Filter by matched skills (list of skill names)
+        location_state: Filter by location (e.g., 'CA', 'NY')
+        min_score: Minimum ATS score (default 85)
+    
+    Returns:
+        {
+            'count': int,
+            'message': str,  # FOMO message
+            'message_variant': str,  # 'urgent_3', 'warning_10', 'normal'
+            'expires_soon_count': int,  # How many expire within 24 hours
+        }
+    """
+    
+    # Build WHERE clause dynamically
+    where_clauses = [
+        "q.status = 'pending'",
+        "(q.expires_at IS NULL OR q.expires_at > NOW())",
+        "q.ats_score >= :min_score"
+    ]
+    params = {"min_score": float(min_score)}
+    
+    if skills:
+        # Assuming matched_skills is JSONB array
+        where_clauses.append("q.matched_skills && :skills_array")
+        params["skills_array"] = skills
+    
+    if location_state:
+        where_clauses.append("q.location_state = :location_state")
+        params["location_state"] = location_state
+    
+    where_sql = " AND ".join(where_clauses)
+    
+    # Count active candidates
+    query_count = text(f"""
+        SELECT COUNT(*) FROM recruiter_active_candidates q
+        WHERE {where_sql}
+    """)
+    result = await db.execute(query_count, params)
+    count = result.scalar() or 0
+    
+    # Count expiring soon (within 24 hours)
+    expires_soon_clause = " AND q.expires_at <= NOW() + INTERVAL '24 hours'"
+    query_expires = text(f"""
+        SELECT COUNT(*) FROM recruiter_candidate_queue q
+        WHERE {where_sql} {expires_soon_clause}
+    """)
+    result_expires = await db.execute(query_expires, params)
+    expires_soon = result_expires.scalar() or 0
+    
+    # Generate scarcity message and variant
+    if count == 0:
+        message = "No candidates currently match your filters."
+        variant = "empty"
+    elif count <= 3:
+        message = f"🔥 Only {count} candidate{'s' if count != 1 else ''} left! Unlock now before they expire in 7 days."
+        variant = "urgent_3"
+    elif count <= 10:
+        message = f"⏳ {count} candidates available (some expire within 48 hours)"
+        variant = "warning_10"
+    else:
+        message = f"✓ {count} candidates available"
+        variant = "normal"
+    
+    return {
+        "count": count,
+        "message": message,
+        "message_variant": variant,
+        "expires_soon_count": expires_soon,
+    }
+
+
+async def log_scarcity_event(
+    db: AsyncSession,
+    recruiter_email: str,
+    candidate_id: str,
+    event_type: str,
+    candidate_count: int,
+    message_variant: str,
+) -> None:
+    """
+    Log scarcity events for A/B analysis.
+    """
+    try:
+        query = text("""
+            INSERT INTO recruiter_scarcity_events
+            (recruiter_email, candidate_id, event_type, candidate_count_at_time, message_variant)
+            VALUES (:email, :cand_id, :etype, :count, :variant)
+        """)
+        await db.execute(query, {
+            "email": recruiter_email,
+            "cand_id": candidate_id,
+            "etype": event_type,
+            "count": candidate_count,
+            "variant": message_variant,
+        })
+        await db.commit()
+    except Exception as e:
+        logger.error(f"[RECRUITER] Failed to log scarcity event: {e}")

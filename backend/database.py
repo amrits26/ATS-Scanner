@@ -22,15 +22,10 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 
-# Load .env files - backend/.env takes precedence over root .env
-# This allows local overrides for development
+# Load .env from project root (single source of truth for all secrets)
 root_env = Path(__file__).parent.parent / ".env"
 if root_env.exists():
-    load_dotenv(root_env, override=False)  # Load root .env first (no override)
-
-backend_env = Path(__file__).parent / ".env"
-if backend_env.exists():
-    load_dotenv(backend_env, override=True)  # Override with backend/.env
+    load_dotenv(root_env, override=False)
 
 
 def _build_database_url() -> str:

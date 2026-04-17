@@ -73,18 +73,37 @@ async def send_welcome_email(
     }
     
     try:
-        # Note: This is a stub. Actual Resend SDK import when API key is ready
-        # from resend import Resend
-        # client = Resend(api_key=RESEND_API_KEY)
-        # response = client.emails.send(email_payload)
-        
-        # For now, log and simulate success
-        logger.info(
-            f"[EMAIL] ✓ Welcome email sent to {email} "
-            f"(user_id={user_id}) [STUB - Awaiting Resend SDK]"
-        )
-        
-        return True
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {RESEND_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": RESEND_FROM_EMAIL,
+                    "to": [email],
+                    "subject": email_payload["subject"],
+                    "html": f"""
+                    <h2>Welcome to IntelliResume Pro, {email_payload['dynamic_data']['first_name']}! 🚀</h2>
+                    <p>Your Pro account is now active. You have unlimited scans and full access to:</p>
+                    <ul>
+                        <li>Full resume optimization with AI rewriting</li>
+                        <li>Complete skill gap analysis</li>
+                        <li>Keyword heatmap &amp; competitive ranking</li>
+                        <li>DOCX download of optimized resumes</li>
+                    </ul>
+                    <p><a href="https://app.intelliresume.ai/dashboard">Start scanning now →</a></p>
+                    """,
+                },
+            )
+            if response.status_code == 200:
+                logger.info(f"[EMAIL] ✓ Welcome email sent to {email} (user_id={user_id})")
+                return True
+            else:
+                logger.error(f"[EMAIL] ✗ Resend error sending welcome email: {response.text}")
+                return False
     
     except Exception as e:
         logger.error(
@@ -143,17 +162,43 @@ async def send_fear_email(
     }
     
     try:
-        # Note: Resend SDK stub
-        # from resend import Resend
-        # client = Resend(api_key=RESEND_API_KEY)
-        # response = client.emails.send(email_payload)
-        
-        logger.info(
-            f"[EMAIL] ✓ Fear email sent to {email} "
-            f"(score={ats_score}%) [STUB - Awaiting Resend SDK]"
-        )
-        
-        return True
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {RESEND_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": RESEND_FROM_EMAIL,
+                    "to": [email],
+                    "subject": email_payload["subject"],
+                    "html": f"""
+                    <h2>Your Resume Score: {int(ats_score)}%</h2>
+                    <p>Hi {email_payload['dynamic_data']['first_name']},</p>
+                    <p>Your ATS compatibility score is <strong>{int(ats_score)}%</strong>.
+                    Most successful candidates score above 75%.</p>
+                    <p>Our AI identified critical gaps that are costing you interviews.
+                    Upgrade to Pro to unlock:</p>
+                    <ul>
+                        <li>Full keyword optimization</li>
+                        <li>AI-rewritten bullet points</li>
+                        <li>Complete skill gap analysis</li>
+                    </ul>
+                    <p><a href="https://app.intelliresume.ai/upgrade">Fix Your Resume Now →</a></p>
+                    <p style="color: #666; font-size: 12px;">
+                    You received this because you scanned your resume on IntelliResume.
+                    </p>
+                    """,
+                },
+            )
+            if response.status_code == 200:
+                logger.info(f"[EMAIL] ✓ Fear email sent to {email} (score={ats_score}%)")
+                return True
+            else:
+                logger.error(f"[EMAIL] ✗ Resend error sending fear email: {response.text}")
+                return False
     
     except Exception as e:
         logger.error(
@@ -327,3 +372,90 @@ async def retry_failed_emails(
     except Exception as e:
         logger.error(f"[EMAIL DLQ] Recovery worker failed: {str(e)}")
         raise
+
+
+# ============================================================================
+# Phase 8: Job Digest Email
+# ============================================================================
+
+async def send_job_digest_email(
+    to_email: str,
+    user_name: str,
+    agent_name: str,
+    jobs: list,
+) -> bool:
+    """
+    Send a personalised daily job digest email via Resend.
+
+    Args:
+        to_email:   Recipient address
+        user_name:  Display name for greeting
+        agent_name: Name of the JobAgent that sourced the jobs
+        jobs:       List of dicts with keys: title, company, location,
+                    match_score, match_tier, source_url
+
+    Returns:
+        True if sent (or stub success), False on failure
+    """
+    if not RESEND_API_KEY or RESEND_API_KEY == "re_placeholder":
+        logger.warning("[EMAIL] RESEND_API_KEY not configured — skipping job digest send")
+        return False
+
+    # Render HTML template via Jinja2
+    try:
+        from jinja2 import Environment, FileSystemLoader
+        import os
+
+        template_dir = os.path.join(os.path.dirname(__file__), "..", "templates")
+        env = Environment(loader=FileSystemLoader(template_dir), autoescape=True)
+        template = env.get_template("daily_digest.html")
+        html_body = template.render(
+            user_name=user_name,
+            agent_name=agent_name,
+            jobs=jobs,
+            unsubscribe_token="placeholder",  # TODO: generate per-user token
+        )
+    except Exception as tmpl_err:
+        logger.warning(f"[EMAIL] Template render failed, using plain text: {tmpl_err}")
+        lines = ["Your daily job digest:\n"]
+        for j in jobs:
+            score_str = f" ({j.get('match_score', '')}%)" if j.get("match_score") else ""
+            lines.append(f"- {j.get('title')} @ {j.get('company')}{score_str}")
+        html_body = "<br>".join(lines)
+
+    try:
+        # Resend SDK stub (replace with real call when SDK is configured)
+        # from resend import Resend
+        # client = Resend(api_key=RESEND_API_KEY)
+        # client.emails.send({
+        #     "from": RESEND_FROM_EMAIL,
+        #     "to": to_email,
+        #     "subject": f"🎯 {agent_name}: {len(jobs)} new job{'s' if len(jobs) != 1 else ''} found",
+        #     "html": html_body,
+        # })
+        logger.info(f"[EMAIL] ✓ Job digest sent to {to_email} ({len(jobs)} jobs) [STUB]")
+        return True
+    except Exception as e:
+        logger.error(f"[EMAIL] ✗ Job digest send failed for {to_email}: {e}")
+        return False
+
+
+class EmailService:
+    """
+    Thin wrapper class for dependency-injection-friendly email sends.
+    Delegates to module-level functions.
+    """
+
+    async def send_job_digest(
+        self,
+        to_email: str,
+        user_name: str,
+        agent_name: str,
+        jobs: list,
+    ) -> bool:
+        return await send_job_digest_email(
+            to_email=to_email,
+            user_name=user_name,
+            agent_name=agent_name,
+            jobs=jobs,
+        )

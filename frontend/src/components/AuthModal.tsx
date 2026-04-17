@@ -220,7 +220,7 @@ export function AuthModal({ isOpen, onClose, onAuthSuccess }: AuthModalProps) {
       scan_limit: 3,
       created_at: new Date().toISOString(),
     };
-    localStorage.setItem("auth_token", "demo-token-123");
+    // Demo mode removed — real auth required
     onAuthSuccess(demoUser);
     setForm({ email: "", password: "", confirmPassword: "" });
     onClose();

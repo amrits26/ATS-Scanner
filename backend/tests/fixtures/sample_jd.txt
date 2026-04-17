@@ -1,0 +1,35 @@
+Senior Backend Engineer — Fintech Startup (Series B)
+
+About the Role:
+We are looking for a Senior Backend Engineer to join our growing engineering team. You will design, build, and scale our core payment processing infrastructure serving millions of transactions daily.
+
+Required Skills:
+- 5+ years of professional software engineering experience
+- Strong proficiency in Python (FastAPI or Django preferred)
+- Experience with PostgreSQL and Redis
+- Familiarity with AWS services (EC2, S3, Lambda, RDS, SQS)
+- Experience with Docker and container orchestration (Kubernetes preferred)
+- Understanding of RESTful API design and microservices architecture
+- Strong understanding of CI/CD pipelines and automated testing
+- Experience with event-driven architectures (Kafka, RabbitMQ, or similar)
+
+Preferred Skills:
+- Experience with financial systems or payment processing
+- Knowledge of TypeScript and React for full-stack contributions
+- Familiarity with Terraform or infrastructure-as-code tools
+- Experience with observability tools (Datadog, Grafana, Prometheus)
+- Understanding of SOC2 compliance and security best practices
+
+Responsibilities:
+- Design and implement scalable backend services for payment processing
+- Optimize database queries and caching strategies for high-throughput systems
+- Collaborate with product and frontend teams to deliver end-to-end features
+- Participate in on-call rotation and incident response
+- Mentor junior engineers and contribute to engineering culture
+
+Benefits:
+- Competitive salary ($180K-$220K) + equity
+- Remote-first culture
+- Health, dental, vision insurance
+- Unlimited PTO
+- $2,000 annual learning budget

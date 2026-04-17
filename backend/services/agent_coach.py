@@ -9,8 +9,6 @@ import logging
 import json
 from typing import Dict, List, Any
 
-import google.generativeai as genai
-
 from backend.services.agent_base import AIAgent
 
 logger = logging.getLogger(__name__)
@@ -76,9 +74,10 @@ Find:
 Return JSON: {{"strong_bullets": [...], "patterns": [...], "score_breakdown": {{...}}}}"""
 
         try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(prompt)
-            result = json.loads(response.text)
+            text, usage = await self.call_gemini(
+                prompt, temperature=self.TEMPERATURE_SCORING, json_mode=True,
+            )
+            result = json.loads(text)
             logger.info(f"[COACH] Strength analysis complete")
             return result
         except Exception as e:
@@ -112,9 +111,10 @@ Return JSON:
 }}"""
 
         try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(prompt)
-            result = json.loads(response.text)
+            text, usage = await self.call_gemini(
+                prompt, temperature=self.TEMPERATURE_SCORING, json_mode=True,
+            )
+            result = json.loads(text)
             logger.info(f"[COACH] Gap detection complete")
             return result
         except Exception as e:
@@ -145,9 +145,10 @@ Each should:
 Return JSON: {{"rewrites": [...], "tips": [...]}}"""
 
         try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(prompt)
-            result = json.loads(response.text)
+            text, usage = await self.call_gemini(
+                prompt, temperature=self.TEMPERATURE_CREATIVE, json_mode=True,
+            )
+            result = json.loads(text)
             logger.info(f"[COACH] Bullet rewriter complete")
             return result
         except Exception as e:
@@ -175,9 +176,10 @@ Return JSON:
 }}"""
 
         try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(prompt)
-            result = json.loads(response.text)
+            text, usage = await self.call_gemini(
+                prompt, temperature=self.TEMPERATURE_SCORING, json_mode=True,
+            )
+            result = json.loads(text)
             logger.info(f"[COACH] Benchmark complete for {target_role}")
             return result
         except Exception as e:
@@ -208,9 +210,10 @@ Break into:
 Return JSON with week_1, week_2, week_3, week_4, quick_wins, long_term lists."""
 
         try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(prompt)
-            result = json.loads(response.text)
+            text, usage = await self.call_gemini(
+                prompt, temperature=self.TEMPERATURE_CREATIVE, json_mode=True,
+            )
+            result = json.loads(text)
             logger.info(f"[COACH] Action plan generated")
             return result
         except Exception as e:

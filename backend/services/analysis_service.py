@@ -13,6 +13,7 @@ This separates the HTTP response layer from the compute layer.
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from datetime import timedelta, datetime
 from typing import Optional, Callable
@@ -24,6 +25,7 @@ from ..database import AsyncSessionLocal
 
 from . import (
     ats_optimizer,
+    gemini_service,
     jd_analyzer,
     scorer,
     visualizer,
@@ -36,12 +38,69 @@ from .skill_analyzer import analyze_skill_gap
 from .resume_parser import extract_resume_text
 from ..utils.text_cleaner import clean_extracted_text
 from ..db_models import AnalysisResult, AnalysisStatus
-from ..models import ComprehensiveAnalysisResult
+from ..models import (
+    ATSScoreResponse,
+    ComprehensiveAnalysisResult,
+    JobDescriptionAnalysis,
+    OptimizedResumeResponse,
+    SkillGapAnalysis,
+)
 from .recruiter_service import add_high_score_candidate_to_queue
 
+# Feature flag: set to True to use the single-call consolidated Gemini prompt
+# for steps 3-5 (JD analysis, optimisation, skill gap, ATS scoring).
+USE_CONSOLIDATED_PROMPT = os.getenv("USE_CONSOLIDATED_PROMPT", "false").lower() == "true"
 
 CHARTS_DIR = Path(__file__).parent / "charts"
 CHARTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+async def _run_consolidated_steps(
+    resume_text: str,
+    jd_text: str,
+    progress_callback: Optional[Callable] = None,
+) -> tuple[JobDescriptionAnalysis, str, ATSScoreResponse, SkillGapAnalysis]:
+    """
+    Execute steps 3-6 via a single Gemini call (consolidated prompt).
+
+    Returns (jd_analysis, optimized_text, ats_score_result, skill_gap).
+    """
+    print("[ANALYSIS] Using consolidated single-call Gemini prompt for steps 3-6")
+    raw = await gemini_service.analyze_comprehensive(resume_text, jd_text)
+
+    # Map raw dict → Pydantic models expected by downstream pipeline
+    jd_analysis = JobDescriptionAnalysis(
+        required_skills=raw["jd_analysis"]["required_skills"],
+        preferred_skills=raw["jd_analysis"]["preferred_skills"],
+        keywords=raw["jd_analysis"]["keywords"],
+        tools=raw["jd_analysis"]["tools_and_technologies"],
+        experience_level=raw["jd_analysis"]["experience_level"],
+    )
+
+    optimized_text = raw["optimized_resume"]
+
+    ats_score_result = ATSScoreResponse(
+        keyword_match_percent=raw["ats_score"]["keyword_match_percent"],
+        semantic_similarity_score=raw["ats_score"]["semantic_similarity_score"],
+        final_ats_score=raw["ats_score"]["final_ats_score"],
+        missing_keywords=raw["ats_score"]["missing_keywords"],
+        recommended_keywords_to_add=raw["ats_score"]["recommended_keywords_to_add"],
+    )
+
+    sg = raw["skill_gap"]
+    total_required = len(jd_analysis.required_skills) or 1
+    skill_gap = SkillGapAnalysis(
+        matched_skills=sg["matched_skills"],
+        missing_skills=sg["missing_skills"],
+        gap_score=sg["gap_score"],
+        match_count=len(sg["matched_skills"]),
+        total_required=total_required,
+    )
+
+    if progress_callback:
+        await progress_callback(5, "Consolidated analysis complete", 62)
+
+    return jd_analysis, optimized_text, ats_score_result, skill_gap
 
 
 async def get_cached_result(
@@ -240,47 +299,67 @@ async def run_comprehensive_analysis(
             print(f"[ERROR] JD preparation failed: {step_error}")
             raise
 
-        # 3) JD analysis
-        try:
-            print(f"[ANALYSIS] Step 3: Analyzing job description...")
-            # Phase 1: Use exponential backoff for Gemini API resilience
-            jd_analysis = await with_exponential_backoff(
-                jd_analyzer.analyze_job_description,
-                max_retries=3,
-                base_delay=1.0,
-                jd_text=jd_text,
-            )
-            print(f"[ANALYSIS] JD analysis complete: {len(jd_analysis.required_skills)} required skills")
-            if progress_callback:
-                await progress_callback(3, "Analyzing Job Description...", 38)
-        except Exception as step_error:
-            print(f"[ERROR] Step 3 (JD analysis) failed: {step_error}")
-            raise
+        # ── Steps 3-6: JD analysis → optimise → score → skill gap ──
+        # Two paths: consolidated single-LLM-call, or legacy multi-step.
 
-        # 4) Optimize resume
-        try:
-            print(f"[ANALYSIS] Step 4: Optimizing resume...")
-            opt_result = await ats_optimizer.optimize_resume(resume_text, jd_text)
-            optimized_text = opt_result.optimized_resume or resume_text
-            print(f"[ANALYSIS] Resume optimized: {len(optimized_text)} chars")
-            if progress_callback:
-                await progress_callback(4, "Optimizing Resume...", 50)
-        except Exception as step_error:
-            print(f"[ERROR] Step 4 (optimize resume) failed: {step_error}")
-            raise
+        # ── Steps 3-6: JD analysis → optimise → score → skill gap ──
+        # Two paths: consolidated single-LLM-call, or legacy multi-step.
+        _used_consolidated = False
 
-        # 5) ATS score
-        try:
-            print(f"[ANALYSIS] Step 5: Computing ATS score...")
-            ats_score_result = scorer.compute_ats_score(
-                optimized_text, jd_text, jd_analysis
-            )
-            print(f"[ANALYSIS] ATS score: {ats_score_result.final_ats_score}")
-            if progress_callback:
-                await progress_callback(5, "Computing ATS Score...", 62)
-        except Exception as step_error:
-            print(f"[ERROR] Step 5 (ATS score) failed: {step_error}")
-            raise
+        if USE_CONSOLIDATED_PROMPT:
+            # ── FAST PATH: single Gemini call covers steps 3-6 ──
+            try:
+                jd_analysis, optimized_text, ats_score_result, skill_gap = (
+                    await _run_consolidated_steps(resume_text, jd_text, progress_callback)
+                )
+                _used_consolidated = True
+            except Exception as step_error:
+                print(f"[ERROR] Consolidated prompt failed: {step_error}, falling back to multi-step")
+
+        if not _used_consolidated:
+            # ── LEGACY PATH: separate service calls for each step ──
+
+            # 3) JD analysis
+            try:
+                print(f"[ANALYSIS] Step 3: Analyzing job description...")
+                # Phase 1: Use exponential backoff for Gemini API resilience
+                jd_analysis = await with_exponential_backoff(
+                    jd_analyzer.analyze_job_description,
+                    max_retries=3,
+                    base_delay=1.0,
+                    jd_text=jd_text,
+                )
+                print(f"[ANALYSIS] JD analysis complete: {len(jd_analysis.required_skills)} required skills")
+                if progress_callback:
+                    await progress_callback(3, "Analyzing Job Description...", 38)
+            except Exception as step_error:
+                print(f"[ERROR] Step 3 (JD analysis) failed: {step_error}")
+                raise
+
+            # 4) Optimize resume
+            try:
+                print(f"[ANALYSIS] Step 4: Optimizing resume...")
+                opt_result = await ats_optimizer.optimize_resume(resume_text, jd_text)
+                optimized_text = opt_result.optimized_resume or resume_text
+                print(f"[ANALYSIS] Resume optimized: {len(optimized_text)} chars")
+                if progress_callback:
+                    await progress_callback(4, "Optimizing Resume...", 50)
+            except Exception as step_error:
+                print(f"[ERROR] Step 4 (optimize resume) failed: {step_error}")
+                raise
+
+            # 5) ATS score
+            try:
+                print(f"[ANALYSIS] Step 5: Computing ATS score...")
+                ats_score_result = scorer.compute_ats_score(
+                    optimized_text, jd_text, jd_analysis
+                )
+                print(f"[ANALYSIS] ATS score: {ats_score_result.final_ats_score}")
+                if progress_callback:
+                    await progress_callback(5, "Computing ATS Score...", 62)
+            except Exception as step_error:
+                print(f"[ERROR] Step 5 (ATS score) failed: {step_error}")
+                raise
 
         # 5.5) Build and store live keywords metadata for real-time UI updates
         try:
@@ -295,17 +374,26 @@ async def run_comprehensive_analysis(
                 "top_added": recommended_keywords[:8],
                 "free_tier_preview": recommended_keywords[:3],
                 "locked_keywords_count": max(0, num_keywords - 3),
-                "predicted_boost": num_keywords * 1.8,  # Each keyword ≈ 1.8% improvement
+                "predicted_boost": sum(
+                    item.get("impact_percent", 1.0)
+                    for item in (ats_score_result.keyword_impact_data or [])
+                ) if ats_score_result.keyword_impact_data else num_keywords * 1.5,
                 "status_message": f"✨ Adding {num_keywords} high-signal keywords from job description...",
                 # Competitive data for brand display
-                "before_score": 0.0,  # Placeholder - we'll calculate actual before below
+                "before_score": 0.0,  # Calculated after original resume scoring
                 "after_score_predicted": ats_score_result.final_ats_score,
-                "match_percentage": (total_jd_keywords / max(1, total_jd_keywords)) * 100,
-                "competitor_avg_score": 22.0,  # Industry benchmark
+                "match_percentage": round((len([k for k in recommended_keywords if k]) / max(1, total_jd_keywords + num_keywords)) * 100, 1) if total_jd_keywords else 0.0,
                 "total_jd_keywords": total_jd_keywords,
                 "keyword_values": [
-                    {"keyword": kw, "impact_percent": 1.8, "confidence": 0.85}
-                    for kw in recommended_keywords[:5]
+                    {
+                        "keyword": item.get("keyword", kw),
+                        "impact_percent": item.get("impact_percent", 1.0),
+                        "confidence": item.get("confidence", 0.70),
+                    }
+                    for kw, item in zip(
+                        recommended_keywords[:5],
+                        (ats_score_result.keyword_impact_data or [{"impact_percent": 1.0, "confidence": 0.70}] * 5),
+                    )
                 ],
                 "steps_log": [
                     "Step 1: Extracted resume text",
@@ -350,28 +438,36 @@ async def run_comprehensive_analysis(
             
             current_score = getattr(ats_score_result, 'final_ats_score', 0)
             
-            # Count how many completed scans have lower scores
+            # Count how many completed scans have LOWER scores than current
             stmt_count_lower = (
                 select(func.count(AnalysisResult.id))
                 .where(
                     AnalysisResult.status == AnalysisStatus.completed,
-                    AnalysisResult.result_json.isnot(None),
+                    AnalysisResult.final_ats_score.isnot(None),
+                    AnalysisResult.final_ats_score < current_score,
+                    AnalysisResult.session_id != session_id,  # Exclude self
                 )
             )
             result_lower = await db.execute(stmt_count_lower)
             lower_count = result_lower.scalar() or 0
             
-            # Count total completed scans (for percentile calculation)
+            # Count total completed scans (excluding self)
             stmt_count_total = (
                 select(func.count(AnalysisResult.id))
-                .where(AnalysisResult.status == AnalysisStatus.completed)
+                .where(
+                    AnalysisResult.status == AnalysisStatus.completed,
+                    AnalysisResult.final_ats_score.isnot(None),
+                    AnalysisResult.session_id != session_id,
+                )
             )
             result_total = await db.execute(stmt_count_total)
-            total_count = result_total.scalar() or 1
+            total_count = result_total.scalar() or 0
             
             # Calculate percentile (0-100), where 100 is best
-            if total_count > 1:
-                percentile_rank = min(100, max(0, int((lower_count / total_count) * 100)))
+            if total_count >= 5:  # Need minimum baseline for meaningful percentile
+                percentile_rank = min(99, max(1, int((lower_count / total_count) * 100)))
+            elif total_count > 0:
+                percentile_rank = min(99, max(1, int((lower_count / total_count) * 100)))
             else:
                 percentile_rank = 50  # Default if no baseline data
             
@@ -405,20 +501,21 @@ async def run_comprehensive_analysis(
             import traceback
             traceback.print_exc()
 
-        # 6) Skill gap analysis
-        try:
-            print(f"[ANALYSIS] Step 6: Analyzing skill gaps...")
-            skill_gap = analyze_skill_gap(
-                optimized_text,
-                jd_analysis.required_skills,
-                jd_analysis.preferred_skills,
-            )
-            print(f"[ANALYSIS] Skill gap: {skill_gap.match_count} matches, {len(skill_gap.missing_skills)} gaps")
-            if progress_callback:
-                await progress_callback(6, "Analyzing Skill Gaps...", 74)
-        except Exception as step_error:
-            print(f"[ERROR] Step 6 (skill gap) failed: {step_error}")
-            raise
+        # 6) Skill gap analysis (skip if consolidated path already computed it)
+        if not _used_consolidated:
+            try:
+                print(f"[ANALYSIS] Step 6: Analyzing skill gaps...")
+                skill_gap = analyze_skill_gap(
+                    optimized_text,
+                    jd_analysis.required_skills,
+                    jd_analysis.preferred_skills,
+                )
+                print(f"[ANALYSIS] Skill gap: {skill_gap.match_count} matches, {len(skill_gap.missing_skills)} gaps")
+                if progress_callback:
+                    await progress_callback(6, "Analyzing Skill Gaps...", 74)
+            except Exception as step_error:
+                print(f"[ERROR] Step 6 (skill gap) failed: {step_error}")
+                raise
 
         # 7) Resume quality score
         try:
@@ -536,12 +633,20 @@ async def run_comprehensive_analysis(
         # 12) Mark complete and store result
         try:
             print(f"[ANALYSIS] Step 12: Storing result to database...")
+            # Extract final_ats_score for fast percentile queries
+            stored_ats_score = None
+            if result_json and isinstance(result_json, dict):
+                ats_data = result_json.get("ats_score", {})
+                if isinstance(ats_data, dict):
+                    stored_ats_score = ats_data.get("final_ats_score")
+            
             stmt = (
                 update(AnalysisResult)
                 .where(AnalysisResult.session_id == session_id)
                 .values(
                     status=AnalysisStatus.completed,
                     result_json=result_json,
+                    final_ats_score=stored_ats_score,
                 )
             )
             await db.execute(stmt)

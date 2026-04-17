@@ -16,13 +16,15 @@ import stripe
 import uuid
 from typing import Optional, Dict, Any
 from datetime import datetime
-from sqlalchemy import update, select, insert, text
+from sqlalchemy import update, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.db_models import (
     User,
     UserTier,
     AnalysisResult,
+    ProcessedStripeEvent,
 )
 
 logger = logging.getLogger(__name__)
@@ -224,26 +226,29 @@ async def handle_checkout_session_completed(
     
     try:
         # === STEP 1: Deduplication (Race-Condition Proof) ===
-        # Use INSERT ... ON CONFLICT DO NOTHING to prevent race conditions
-        stmt_check_dedup = insert(text("""
-            processed_stripe_events (event_id, event_type, user_id, webhook_payload, processed_at)
-            VALUES (:event_id, 'checkout.session.completed', :user_id, :payload, NOW())
-            ON CONFLICT (event_id) DO NOTHING
-        """)).bindparams(
-            event_id=event_id,
-            user_id=user_id,
-            payload=session,
+        # Check if event already processed using ORM model
+        from backend.db_models import ProcessedStripeEvent
+        
+        existing_event = await db.execute(
+            select(ProcessedStripeEvent).where(
+                ProcessedStripeEvent.event_id == event_id
+            )
         )
-        
-        result_dedup = await db.execute(stmt_check_dedup)
-        
-        # If no rows inserted, this event was already processed
-        if result_dedup.rowcount == 0:
+        if existing_event.scalar_one_or_none():
             logger.info(
                 f"[STRIPE WEBHOOK] checkout.session.completed: "
                 f"Event {event_id} already processed (deduplication)"
             )
             return False
+        
+        # Record this event as processed
+        db.add(ProcessedStripeEvent(
+            event_id=event_id,
+            event_type="checkout.session.completed",
+            user_id=user_id,
+            webhook_payload=session,
+        ))
+        await db.flush()
         
         # === STEP 2: Atomicity + Race Condition Prevention ===
         # Use SELECT ... FOR UPDATE to lock the user row (prevent concurrent updates)
@@ -360,19 +365,17 @@ async def handle_charge_refunded(
         return False
     
     try:
-        # === Deduplication ===
-        stmt_dedup = insert(text("""
-            processed_stripe_events (event_id, event_type, user_id, webhook_payload, processed_at)
-            VALUES (:event_id, 'charge.refunded', NULL, :payload, NOW())
-            ON CONFLICT (event_id) DO NOTHING
-        """)).bindparams(
-            event_id=event_id,
-            payload=charge,
-        )
-        
-        result_dedup = await db.execute(stmt_dedup)
-        
-        if result_dedup.rowcount == 0:
+        # === Deduplication (ORM + IntegrityError) ===
+        try:
+            db.add(ProcessedStripeEvent(
+                event_id=event_id,
+                event_type="charge.refunded",
+                user_id=None,
+                webhook_payload=charge,
+            ))
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
             logger.info(
                 f"[STRIPE WEBHOOK] charge.refunded: Event {event_id} already processed"
             )
@@ -444,19 +447,17 @@ async def handle_subscription_deleted(
         return False
     
     try:
-        # === Deduplication ===
-        stmt_dedup = insert(text("""
-            processed_stripe_events (event_id, event_type, user_id, webhook_payload, processed_at)
-            VALUES (:event_id, 'customer.subscription.deleted', NULL, :payload, NOW())
-            ON CONFLICT (event_id) DO NOTHING
-        """)).bindparams(
-            event_id=event_id,
-            payload=subscription,
-        )
-        
-        result_dedup = await db.execute(stmt_dedup)
-        
-        if result_dedup.rowcount == 0:
+        # === Deduplication (ORM + IntegrityError) ===
+        try:
+            db.add(ProcessedStripeEvent(
+                event_id=event_id,
+                event_type="customer.subscription.deleted",
+                user_id=None,
+                webhook_payload=subscription,
+            ))
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
             logger.info(
                 f"[STRIPE WEBHOOK] customer.subscription.deleted: "
                 f"Event {event_id} already processed"
@@ -523,19 +524,17 @@ async def handle_invoice_payment_failed(
         return False
     
     try:
-        # === Deduplication ===
-        stmt_dedup = insert(text("""
-            processed_stripe_events (event_id, event_type, user_id, webhook_payload, processed_at)
-            VALUES (:event_id, 'invoice.payment_failed', NULL, :payload, NOW())
-            ON CONFLICT (event_id) DO NOTHING
-        """)).bindparams(
-            event_id=event_id,
-            payload=invoice,
-        )
-        
-        result_dedup = await db.execute(stmt_dedup)
-        
-        if result_dedup.rowcount == 0:
+        # === Deduplication (ORM + IntegrityError) ===
+        try:
+            db.add(ProcessedStripeEvent(
+                event_id=event_id,
+                event_type="invoice.payment_failed",
+                user_id=None,
+                webhook_payload=invoice,
+            ))
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
             logger.info(
                 f"[STRIPE WEBHOOK] invoice.payment_failed: Event {event_id} already processed"
             )

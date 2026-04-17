@@ -16,9 +16,33 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Optional, Callable
 from datetime import datetime
 
+import json as json_module
+import re
+
 import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Shared tech acronym whitelist — skills that look like short/junk tokens but
+# are legitimate. Imported by jd_analyzer.py and keyword_heatmap.py.
+# ============================================================================
+TECH_ACRONYM_WHITELIST: set[str] = {
+    "ai", "ml", "qa", "ui", "ux", "c#", "c++", "go", "r",
+    "api", "aws", "gcp", "sql", "csv", "rpa", "dba",
+    "ci", "cd", "ci/cd", "rest", "sdk", "iot", "vpn",
+    "dns", "ssh", "tls", "ssl", "tcp", "ip",
+    "saas", "paas", "iaas", "crm", "erp", "etl",
+    "nlp", "llm", "rag", "ocr", "rnn", "cnn", "gan",
+    "vue", "php", "seo", "sem", "bi", "kpi", "okr",
+    "jwt", "oauth", "sso", "rbac", "gdpr", "pci",
+    "k8s", "ec2", "s3", "rds", "ecs", "eks", "iam",
+    "sqs", "sns", "cdn", "waf", "emr", "glue",
+    "gke", "bq", "gcr", "gcs",
+    "vm", "aks", "adf",
+    "nos", "npm", "pip", "gem", "mvn", "nix",
+}
 
 
 class AgentState(str, Enum):
@@ -50,6 +74,10 @@ class AIAgent(ABC):
     - parse_user_goal(): Extract user intent
     """
 
+    # Task-type temperature defaults
+    TEMPERATURE_SCORING = 0.1   # Deterministic: scoring, extraction, grading
+    TEMPERATURE_CREATIVE = 0.7  # Creative: rewriting, cover letters, coaching
+
     def __init__(
         self,
         agent_type: str,
@@ -72,6 +100,222 @@ class AIAgent(ABC):
         # Tool registry
         self.tools = {}
         self._register_tools()
+
+    # ========================================================================
+    # CENTRALIZED GEMINI CALL — temperature, JSON mode, real token counting
+    # ========================================================================
+
+    async def call_gemini(
+        self,
+        prompt: str,
+        *,
+        temperature: float = None,
+        json_mode: bool = False,
+        model_name: str = "gemini-1.5-flash",
+        use_few_shot: bool = False,
+        input_context: dict = None,
+        prefer_fine_tuned: bool = True,
+    ) -> tuple[str, dict]:
+        """
+        Centralized Gemini API call with:
+        - Configurable temperature (defaults by task type)
+        - Optional JSON response mode for structured output
+        - Real token counting via usage_metadata (not word count)
+        - Optional few-shot prompt augmentation from training pipeline
+        - Fine-tuned model routing via Together AI when deployed
+        
+        Returns:
+            (response_text, usage_dict)
+            usage_dict = {"prompt_tokens": int, "completion_tokens": int}
+        """
+        # Optionally inject few-shot examples from training pipeline
+        if use_few_shot and input_context:
+            try:
+                from backend.services.agent_training import AgentTrainingPipeline
+                from backend.database import AsyncSessionLocal
+
+                async with AsyncSessionLocal() as db:
+                    pipeline = AgentTrainingPipeline(db)
+                    prompt = await pipeline.build_few_shot_prompt(
+                        self.agent_type,
+                        input_context,
+                        prompt,
+                        max_examples=2,
+                    )
+            except Exception as e:
+                logger.warning(f"[{self.agent_type.upper()}] Few-shot injection failed: {e}")
+
+        if temperature is None:
+            temperature = self.TEMPERATURE_SCORING
+
+        # Check for a deployed fine-tuned model
+        if prefer_fine_tuned and self.agent_type:
+            try:
+                from backend.services.fine_tuning import FineTuningService
+                from backend.database import AsyncSessionLocal as _ASL
+
+                async with _ASL() as ft_db:
+                    ft_model_id = await FineTuningService(ft_db).get_active_model(
+                        self.agent_type
+                    )
+                if ft_model_id:
+                    logger.info(
+                        f"[{self.agent_type.upper()}] Routing to fine-tuned model: {ft_model_id}"
+                    )
+                    return await self._call_together_model(
+                        ft_model_id, prompt, temperature, json_mode
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[{self.agent_type.upper()}] Fine-tuned lookup failed, "
+                    f"falling back to Gemini: {e}"
+                )
+
+        # Default: call Gemini
+        generation_config = {"temperature": temperature}
+        if json_mode:
+            generation_config["response_mime_type"] = "application/json"
+
+        model = genai.GenerativeModel(
+            model_name,
+            generation_config=generation_config,
+        )
+        response = model.generate_content(prompt)
+
+        # Extract real token counts from usage_metadata (not word-splitting)
+        usage = {"prompt_tokens": 0, "completion_tokens": 0}
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            meta = response.usage_metadata
+            usage["prompt_tokens"] = getattr(meta, "prompt_token_count", 0) or 0
+            usage["completion_tokens"] = getattr(meta, "candidates_token_count", 0) or 0
+        else:
+            # Fallback estimate (1.3 tokens per word) — better than 1:1
+            usage["prompt_tokens"] = int(len(prompt.split()) * 1.3)
+            usage["completion_tokens"] = int(len((response.text or "").split()) * 1.3)
+
+        self.gemini_input_tokens += usage["prompt_tokens"]
+        self.gemini_output_tokens += usage["completion_tokens"]
+
+        return (response.text or "").strip(), usage
+
+    # ========================================================================
+    # TOGETHER AI — call a fine-tuned model hosted on Together
+    # ========================================================================
+
+    async def _call_together_model(
+        self,
+        model_id: str,
+        prompt: str,
+        temperature: float,
+        json_mode: bool,
+        _max_retries: int = 3,
+    ) -> tuple[str, dict]:
+        """Call a fine-tuned LoRA model on Together AI's inference API.
+
+        Includes exponential backoff for transient failures (429, 500, 502, 503, 504).
+        """
+
+        import os
+        import aiohttp
+
+        api_key = os.getenv("TOGETHER_API_KEY", "")
+        if not api_key:
+            raise RuntimeError("TOGETHER_API_KEY not set — cannot call fine-tuned model")
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload: dict = {
+            "model": model_id,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+            "max_tokens": 2048,
+        }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+
+        last_error = None
+        for attempt in range(_max_retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        "https://api.together.xyz/v1/chat/completions",
+                        headers=headers,
+                        json=payload,
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            text = data["choices"][0]["message"]["content"]
+                            remote_usage = data.get("usage", {})
+                            usage = {
+                                "prompt_tokens": remote_usage.get("prompt_tokens", 0),
+                                "completion_tokens": remote_usage.get("completion_tokens", 0),
+                            }
+                            self.gemini_input_tokens += usage["prompt_tokens"]
+                            self.gemini_output_tokens += usage["completion_tokens"]
+                            return text.strip(), usage
+
+                        # Retryable status codes
+                        if resp.status in (429, 500, 502, 503, 504):
+                            body = await resp.text()
+                            last_error = RuntimeError(
+                                f"Together AI ({resp.status}): {body[:200]}"
+                            )
+                            backoff = 2 ** attempt  # 1s, 2s, 4s
+                            logger.warning(
+                                f"[{self.agent_type.upper()}] Together AI {resp.status}, "
+                                f"retrying in {backoff}s (attempt {attempt + 1}/{_max_retries})"
+                            )
+                            await asyncio.sleep(backoff)
+                            continue
+
+                        # Non-retryable error
+                        error = await resp.text()
+                        raise RuntimeError(f"Together AI error ({resp.status}): {error}")
+
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                last_error = e
+                backoff = 2 ** attempt
+                logger.warning(
+                    f"[{self.agent_type.upper()}] Together AI network error: {e}, "
+                    f"retrying in {backoff}s (attempt {attempt + 1}/{_max_retries})"
+                )
+                await asyncio.sleep(backoff)
+
+        # All retries exhausted
+        raise RuntimeError(
+            f"Together AI failed after {_max_retries} attempts: {last_error}"
+        )
+
+    def parse_json_response(self, text: str) -> Any:
+        """
+        Robust JSON extraction from Gemini output.
+        Strips markdown code blocks and handles common malformations.
+        """
+        text = text.strip()
+        # Strip markdown code fences
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text)
+            text = re.sub(r"\s*```\s*$", "", text)
+
+        # Try direct parse first
+        try:
+            return json_module.loads(text)
+        except json_module.JSONDecodeError:
+            pass
+
+        # Try extracting JSON object or array
+        for pattern in [r"\{.*\}", r"\[.*\]"]:
+            match = re.search(pattern, text, re.DOTALL)
+            if match:
+                try:
+                    return json_module.loads(match.group())
+                except json_module.JSONDecodeError:
+                    continue
+
+        logger.warning(f"[{self.agent_type}] Failed to parse JSON from Gemini response")
+        return None
 
     # ========================================================================
     # Abstract methods (implemented by subclasses)
@@ -143,15 +387,14 @@ Return a JSON list of tool calls:
 
 Return ONLY the JSON, no other text."""
 
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(prompt)
-
-            # Track token usage
-            self.gemini_input_tokens += len(prompt.split())
-            self.gemini_output_tokens += len(response.text.split())
+            text, usage = await self.call_gemini(
+                prompt,
+                temperature=self.TEMPERATURE_SCORING,
+                json_mode=True,
+            )
 
             # Parse tool calls
-            tool_calls = self._parse_tool_calls_json(response.text)
+            tool_calls = self._parse_tool_calls_json(text)
             logger.info(f"[{self.agent_type}] THINK: Decided to call {len(tool_calls)} tools")
             return tool_calls
 
@@ -262,14 +505,18 @@ Include:
 
 Return JSON with keys: response, action_items, confidence, follow_up"""
 
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(prompt)
+            text, usage = await self.call_gemini(
+                prompt,
+                temperature=self.TEMPERATURE_CREATIVE,
+                json_mode=True,
+            )
 
-            # Track tokens
-            self.gemini_input_tokens += len(prompt.split())
-            self.gemini_output_tokens += len(response.text.split())
-
-            synthesis = self._parse_synthesis_json(response.text)
+            synthesis = self.parse_json_response(text) or {
+                "response": text,
+                "action_items": [],
+                "confidence": 50,
+                "follow_up": "Let me help you further.",
+            }
             self.state = AgentState.completed
 
             logger.info(f"[{self.agent_type}] REFLECT: Complete")
@@ -310,15 +557,14 @@ Return JSON with keys: response, action_items, confidence, follow_up"""
             # REFLECT
             synthesis = await self.reflect(user_goal, tool_results)
 
-            # Calculate elapsed time and cost
+            # Calculate elapsed time and cost (using real token counts from usage_metadata)
             self.end_time = time.time()
             execution_time = self.end_time - self.start_time
 
-            # Estimate Gemini cost
-            # Pricing: $0.075/1M tokens input, $0.30/1M tokens output
+            # Gemini 1.5 Flash pricing (April 2026): $0.075/1M input, $0.30/1M output
             input_cost = (self.gemini_input_tokens / 1_000_000) * 0.075
             output_cost = (self.gemini_output_tokens / 1_000_000) * 0.30
-            total_cost_cents = int((input_cost + output_cost) * 100)
+            total_cost_cents = max(1, int((input_cost + output_cost) * 100))  # Minimum 1 cent
 
             # Log to telemetry if available
             if self.telemetry:

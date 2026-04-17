@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Your Daily Job Digest — IntelliResume</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f4f6f9; margin: 0; padding: 0; }
+    .wrapper { max-width: 600px; margin: 0 auto; background: #ffffff; }
+    .header { background: #1a1a2e; padding: 28px 32px; text-align: center; }
+    .header h1 { color: #ffffff; font-size: 22px; margin: 0; }
+    .header p { color: #8b97c9; font-size: 13px; margin: 6px 0 0; }
+    .body { padding: 28px 32px; }
+    .greeting { font-size: 16px; color: #1a1a2e; margin-bottom: 8px; }
+    .subheading { font-size: 14px; color: #555; margin-bottom: 24px; }
+    .job-card { border: 1px solid #e8ecf0; border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; background: #fafbfc; }
+    .job-title { font-size: 16px; font-weight: 700; color: #1a1a2e; margin: 0 0 4px; }
+    .job-meta { font-size: 13px; color: #6b7280; margin: 0 0 12px; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; margin-right: 6px; }
+    .badge-strong { background: #d1fae5; color: #065f46; }
+    .badge-potential { background: #fffbeb; color: #92400e; }
+    .badge-partial { background: #fce7f3; color: #9d174d; }
+    .match-score { font-size: 22px; font-weight: 800; color: #4f46e5; float: right; }
+    .cta-btn { display: block; text-align: center; background: #4f46e5; color: #ffffff; text-decoration: none; padding: 14px 24px; border-radius: 8px; font-size: 15px; font-weight: 600; margin: 24px 0 16px; }
+    .footer { background: #f4f6f9; padding: 20px 32px; text-align: center; font-size: 12px; color: #9ca3af; }
+    .footer a { color: #6b7280; }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <!-- Header -->
+    <div class="header">
+      <h1>IntelliResume</h1>
+      <p>Your Daily Job Digest</p>
+    </div>
+
+    <!-- Body -->
+    <div class="body">
+      <p class="greeting">Hi {{ user_name }},</p>
+      <p class="subheading">
+        Your <strong>{{ agent_name }}</strong> agent found <strong>{{ jobs | length }} new job{{ 's' if jobs | length != 1 else '' }}</strong> for you today.
+        Here are the top matches:
+      </p>
+
+      {% for job in jobs %}
+      <div class="job-card">
+        {% if job.match_score is not none %}
+        <span class="match-score">{{ (job.match_score | round(0) | int) }}%</span>
+        {% endif %}
+        <div class="job-title">{{ job.title }}</div>
+        <div class="job-meta">{{ job.company }} &bull; {{ job.location }}</div>
+        {% if job.match_tier %}
+          {% if job.match_tier == 'Strong Match' %}
+          <span class="badge badge-strong">Strong Match</span>
+          {% elif job.match_tier == 'Potential Fit' %}
+          <span class="badge badge-potential">Potential Fit</span>
+          {% else %}
+          <span class="badge badge-partial">{{ job.match_tier }}</span>
+          {% endif %}
+        {% endif %}
+        {% if job.source_url %}
+        <br /><a href="{{ job.source_url }}" style="font-size:13px; color:#4f46e5; text-decoration:none;">View Job →</a>
+        {% endif %}
+      </div>
+      {% endfor %}
+
+      <a class="cta-btn" href="https://app.intelliresume.ai/job-agents">
+        Tailor My Resume for These Jobs →
+      </a>
+
+      <p style="font-size:13px; color:#6b7280; text-align:center;">
+        You're receiving this because you have an active Job Agent named <em>{{ agent_name }}</em>.<br />
+        <a href="https://app.intelliresume.ai/settings/agents" style="color:#6b7280;">Manage your agents</a>
+      </p>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      IntelliResume AI &bull; 
+      <a href="https://app.intelliresume.ai/unsubscribe?token={{ unsubscribe_token }}">Unsubscribe</a>
+      &bull; <a href="https://app.intelliresume.ai/privacy">Privacy Policy</a>
+    </div>
+  </div>
+</body>
+</html>

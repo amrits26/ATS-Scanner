@@ -21,10 +21,11 @@ Production-ready AI-powered ATS Resume Optimizer: upload resume and job descript
 - **Backend**: FastAPI (Python), Pydantic for data validation
 - **Frontend**: React, TypeScript, Vite, Tailwind CSS
 - **LLM Integration**: Google Gemini 1.5 Flash via `google-generativeai`
+- **Single-Call AI Pipeline**: Consolidated prompt — JD analysis, resume optimization, ATS scoring, and skill gap in one Gemini round-trip (~3× faster than sequential calls)
 - **Text Processing**: pdfplumber (PDF), python-docx (DOCX)
 - **Analysis**: scikit-learn (TF-IDF, cosine similarity)
 - **Visualization**: Matplotlib (charts), NumPy
-- **Deployment-ready**: Docker-compatible, serverless-compatible
+- **Deployment-ready**: Docker + Railway/Render, serverless-compatible
 
 ## 📚 Tech Pivot: OpenAI to Gemini
 
@@ -53,6 +54,54 @@ OpenAI Integration:              Gemini Integration:
 - ✅ **Reliability**: Google's infrastructure + API consistency
 - ✅ **Flexibility**: Easy to swap providers with same codebase
 
+## ⚡ Single-Call AI Pipeline (Technical Differentiator)
+
+The comprehensive analysis endpoint supports two execution paths, controlled by the `USE_CONSOLIDATED_PROMPT` feature flag:
+
+| | Legacy Multi-Step | Consolidated Single-Call |
+|---|---|---|
+| **Gemini API calls** | 4 sequential (JD analysis → optimize → score → skill gap) | **1 structured prompt** |
+| **Typical latency** | ~12-15 s (4 × ~3 s per call) | **~3-5 s** |
+| **API cost** | 4× token billing | **1× token billing** |
+| **Failure mode** | Any step can fail independently | Atomic — succeeds or falls back to multi-step |
+
+### How It Works
+
+```
+POST /api/analyze/comprehensive
+  └─ analysis_service.run_comprehensive_analysis()
+       │
+       ├─ USE_CONSOLIDATED_PROMPT=true
+       │   └─ gemini_service.analyze_comprehensive()   ← 1 Gemini call
+       │       ├─ Returns: jd_analysis + optimized_resume + ats_score + skill_gap
+       │       ├─ JSON schema validated (_validate_consolidated)
+       │       └─ On failure → automatic fallback to legacy path ↓
+       │
+       └─ USE_CONSOLIDATED_PROMPT=false  (or fallback)
+           ├─ Step 3: jd_analyzer.analyze_job_description()
+           ├─ Step 4: ats_optimizer.optimize_resume()
+           ├─ Step 5: scorer.compute_ats_score()
+           └─ Step 6: skill_analyzer.analyze_skill_gap()
+       │
+       └─ Steps 7-13 continue identically (quality, heatmap, charts, etc.)
+```
+
+### Enable It
+
+```env
+# .env
+USE_CONSOLIDATED_PROMPT=true
+```
+
+### Monitor Fallbacks
+
+When the consolidated prompt's JSON output fails validation, the system logs:
+```
+[ERROR] Consolidated prompt failed: <reason>, falling back to multi-step
+[GEMINI] Consolidated call failed validation: <details>
+```
+Search logs for `consolidated` or `fallback` to identify edge cases.
+
 
 
 ```
@@ -71,7 +120,8 @@ ATS Scanner/
 │   │   ├── doc_generator.py          # DOCX generation
 │   │   ├── visualizer.py             # Matplotlib charts
 │   │   ├── writing_feedback.py       # Writing analysis
-│   │   └── gemini_service.py         # Google Gemini API integration
+│   │   ├── gemini_service.py         # Gemini API: analyze_comprehensive() + legacy analyze_resume_match()
+│   │   └── analysis_service.py       # 13-step pipeline with consolidated/legacy branching
 │   ├── utils/
 │   │   ├── resume_parser.py          # Shared parser utilities
 │   │   └── text_cleaner.py           # Text normalization

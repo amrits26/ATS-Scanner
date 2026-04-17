@@ -30,7 +30,8 @@ CRITICAL RULES:
 6. REWRITE entire bullet points—don't just swap one word. Change structure, order, and emphasis.
 7. Example transformation:
    WEAK: "Worked with Python and databases"
-   STRONG: "Engineered Python-based microservices integrating PostgreSQL and Redis for 40% performance gain"
+   STRONG: "Engineered Python-based microservices integrating PostgreSQL and Redis, reducing query latency and improving data pipeline throughput"
+   NOTE: Only add metrics if they exist in the original resume. Do NOT invent numbers.
 8. CRITICAL: The output MUST be noticeably different from the original by at least 25%.
 9. Return STRICT JSON only. No explanations."""
 
@@ -90,7 +91,13 @@ async def optimize_resume(resume_text: str, jd_text: str) -> OptimizedResumeResp
 
     for retry_count in range(3):  # Retry up to 3 times if similarity is too high
         try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel(
+                'gemini-1.5-flash',
+                generation_config={
+                    "temperature": 0.7,
+                    "response_mime_type": "application/json",
+                },
+            )
             prompt = SYSTEM_OPT + "\n\n" + USER_OPT_TEMPLATE.format(resume_text=resume_excerpt, jd_excerpt=jd_excerpt)
             resp = model.generate_content(prompt)
             content = (resp.text or "").strip()

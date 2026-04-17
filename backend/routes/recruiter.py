@@ -14,10 +14,14 @@ from typing import Optional, List
 import logging
 
 from backend.database import get_db
+from backend.auth import get_current_recruiter
+from backend.db_models import RecruiterAccount
 from backend.services.recruiter_service import (
     get_available_leads,
     get_recruiter_stats,
     get_unlocked_candidate,
+    get_active_candidates_count,
+    log_scarcity_event,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,18 +34,17 @@ LEAD_UNLOCK_PRICE_ID = os.getenv("STRIPE_LEAD_UNLOCK_PRICE_ID", "price_placehold
 
 
 class UnlockRequest(BaseModel):
-    recruiter_email: str
+    pass
 
 
 class HireReportRequest(BaseModel):
     candidate_id: str
-    recruiter_email: str
     hire_date: Optional[str] = None  # YYYY-MM-DD
 
 
 @router.get("/leads")
 async def list_leads(
-    recruiter_email: str = Query(..., description="Recruiter's email"),
+    current_recruiter: RecruiterAccount = Depends(get_current_recruiter),
     skills: Optional[str] = Query(None, description="Comma-separated skills"),
     location_state: Optional[str] = None,
     min_score: float = 85,
@@ -52,6 +55,7 @@ async def list_leads(
 ):
     """Get paginated list of available leads for a recruiter."""
     try:
+        recruiter_email = current_recruiter.email
         skills_list = skills.split(",") if skills else None
         result = await get_available_leads(
             db, recruiter_email, skills_list, location_state, min_score, days_old, page, limit
@@ -65,18 +69,19 @@ async def list_leads(
 @router.post("/unlock/{candidate_id}")
 async def create_unlock_checkout(
     candidate_id: str,
-    req: UnlockRequest,
+    current_recruiter: RecruiterAccount = Depends(get_current_recruiter),
     db: AsyncSession = Depends(get_db),
 ):
     """Create Stripe Checkout session for $5 lead unlock."""
     try:
+        recruiter_email = current_recruiter.email
         # Check if already unlocked by this recruiter
         check_query = text("""
             SELECT status, expires_at FROM recruiter_unlock_purchases
             WHERE candidate_id = :candidate_id AND recruiter_email = :email
         """)
         existing = await db.execute(
-            check_query, {"candidate_id": candidate_id, "email": req.recruiter_email}
+            check_query, {"candidate_id": candidate_id, "email": recruiter_email}
         )
         row = existing.fetchone()
         if row:
@@ -99,7 +104,7 @@ async def create_unlock_checkout(
             cancel_url=f"{FRONTEND_URL}/recruiter?unlock_canceled=true",
             metadata={
                 "candidate_id": candidate_id,
-                "recruiter_email": req.recruiter_email,
+                "recruiter_email": recruiter_email,
             }
         )
 
@@ -114,13 +119,13 @@ async def create_unlock_checkout(
             insert_query,
             {
                 "candidate_id": candidate_id,
-                "email": req.recruiter_email,
+                "email": recruiter_email,
                 "session_id": checkout_session.id,
             },
         )
         await db.commit()
 
-        logger.info(f"[RECRUITER] Unlock checkout created for {req.recruiter_email}, candidate {candidate_id}")
+        logger.info(f"[RECRUITER] Unlock checkout created for {recruiter_email}, candidate {candidate_id}")
 
         return {
             "sessionId": checkout_session.id,
@@ -179,9 +184,14 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/hire_report")
-async def report_hire(req: HireReportRequest, db: AsyncSession = Depends(get_db)):
+async def report_hire(
+    req: HireReportRequest,
+    current_recruiter: RecruiterAccount = Depends(get_current_recruiter),
+    db: AsyncSession = Depends(get_db),
+):
     """Recruiter reports a hire, triggers $500 charge."""
     try:
+        recruiter_email = current_recruiter.email
         # Verify unlock exists and is active
         check_query = text("""
             SELECT id FROM recruiter_unlock_purchases
@@ -191,7 +201,7 @@ async def report_hire(req: HireReportRequest, db: AsyncSession = Depends(get_db)
               AND expires_at > NOW()
         """)
         result = await db.execute(
-            check_query, {"candidate_id": req.candidate_id, "email": req.recruiter_email}
+            check_query, {"candidate_id": req.candidate_id, "email": recruiter_email}
         )
         if not result.fetchone():
             raise HTTPException(status_code=400, detail="No active unlock found for this candidate")
@@ -202,7 +212,7 @@ async def report_hire(req: HireReportRequest, db: AsyncSession = Depends(get_db)
             WHERE candidate_id = :candidate_id AND recruiter_email = :email
         """)
         existing = await db.execute(
-            hire_check, {"candidate_id": req.candidate_id, "email": req.recruiter_email}
+            hire_check, {"candidate_id": req.candidate_id, "email": recruiter_email}
         )
         if existing.fetchone():
             raise HTTPException(status_code=400, detail="Hire already reported for this candidate")
@@ -214,7 +224,7 @@ async def report_hire(req: HireReportRequest, db: AsyncSession = Depends(get_db)
             description=f"Hire success fee for candidate {req.candidate_id}",
             metadata={
                 "candidate_id": req.candidate_id,
-                "recruiter_email": req.recruiter_email,
+                "recruiter_email": recruiter_email,
             }
         )
 
@@ -231,7 +241,7 @@ async def report_hire(req: HireReportRequest, db: AsyncSession = Depends(get_db)
             insert_query,
             {
                 "candidate_id": req.candidate_id,
-                "email": req.recruiter_email,
+                "email": recruiter_email,
                 "hire_date": req.hire_date or datetime.utcnow().date(),
                 "charge_id": charge_id,
                 "status": pay_status,
@@ -239,7 +249,7 @@ async def report_hire(req: HireReportRequest, db: AsyncSession = Depends(get_db)
         )
         await db.commit()
 
-        logger.info(f"[RECRUITER] Hire reported for candidate {req.candidate_id}, recruiter {req.recruiter_email}")
+        logger.info(f"[RECRUITER] Hire reported for candidate {req.candidate_id}, recruiter {recruiter_email}")
 
         return {"success": True, "message": "Hire reported successfully! $500 charge processed."}
     except HTTPException:
@@ -251,12 +261,12 @@ async def report_hire(req: HireReportRequest, db: AsyncSession = Depends(get_db)
 
 @router.get("/stats")
 async def recruiter_stats(
-    recruiter_email: str = Query(...),
+    current_recruiter: RecruiterAccount = Depends(get_current_recruiter),
     db: AsyncSession = Depends(get_db),
 ):
     """Get recruiter stats."""
     try:
-        stats = await get_recruiter_stats(db, recruiter_email)
+        stats = await get_recruiter_stats(db, current_recruiter.email)
         return stats
     except Exception as e:
         logger.error(f"[RECRUITER] Error fetching stats: {str(e)}")
@@ -266,12 +276,12 @@ async def recruiter_stats(
 @router.get("/unlocked/{candidate_id}")
 async def view_unlocked_candidate(
     candidate_id: str,
-    recruiter_email: str = Query(...),
+    current_recruiter: RecruiterAccount = Depends(get_current_recruiter),
     db: AsyncSession = Depends(get_db),
 ):
     """Get full candidate info after unlock."""
     try:
-        candidate = await get_unlocked_candidate(db, candidate_id, recruiter_email)
+        candidate = await get_unlocked_candidate(db, candidate_id, current_recruiter.email)
         if not candidate:
             raise HTTPException(
                 status_code=404,
@@ -283,3 +293,71 @@ async def view_unlocked_candidate(
     except Exception as e:
         logger.error(f"[RECRUITER] Error fetching unlocked candidate: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to load candidate")
+
+
+# =============================================================================
+# PHASE 3: Recruiter Scarcity Feature - FOMO-based Conversion
+# =============================================================================
+
+@router.get("/candidates/count")
+async def get_candidate_count(
+    skills: Optional[str] = Query(None, description="Comma-separated skills"),
+    location_state: Optional[str] = Query(None),
+    min_score: Optional[int] = Query(85),
+    current_recruiter: RecruiterAccount = Depends(get_current_recruiter),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return count of active candidates + scarcity messaging.
+    Logs impression event for A/B analysis.
+    
+    Query params:
+      - skills: CSV list (e.g., "python,javascript,aws")
+      - location_state: State code (e.g., "CA", "NY")
+      - min_score: Minimum ATS score (default 85)
+    
+    Returns:
+        {
+            'count': int,
+            'message': str,
+            'message_variant': str,
+            'expires_soon_count': int
+        }
+    """
+    try:
+        recruiter_email = current_recruiter.email
+        
+        # Parse skills filter
+        skills_list = None
+        if skills:
+            skills_list = [s.strip() for s in skills.split(",")]
+        
+        # Get count and scarcity data
+        result = await get_active_candidates_count(
+            db=db,
+            recruiter_email=recruiter_email,
+            skills=skills_list,
+            location_state=location_state,
+            min_score=min_score or 85,
+        )
+        
+        # Log the impression event (for A/B analysis)
+        if result["count"] > 0:
+            try:
+                await log_scarcity_event(
+                    db=db,
+                    recruiter_email=recruiter_email,
+                    candidate_id="batch_view",
+                    event_type="impression",
+                    candidate_count=result["count"],
+                    message_variant=result["message_variant"],
+                )
+            except Exception as e:
+                logger.warning(f"[RECRUITER] Failed to log impression: {e}")
+        
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[RECRUITER] Error fetching candidate count: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to load candidate count")

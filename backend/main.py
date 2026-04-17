@@ -29,8 +29,12 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, insert
 
@@ -39,7 +43,9 @@ from .database import get_db, AsyncSessionLocal
 from .db_models import (
     AnalysisResult,
     AnalysisStatus,
+    SubscriptionStatus,
     User,
+    UserTier,
     ProcessedStripeEvent,
     StripeWebhookEvent,
     FailedEmailRetry,
@@ -76,15 +82,38 @@ from .services.quality_scorer import calculate_resume_quality
 from .services.skill_analyzer import analyze_skill_gap
 from .services.resume_parser import extract_resume_text
 from .services import stripe_service
+from .services.analysis_cache import analysis_cache
 from .services.recruiter_service import add_high_score_candidate_to_queue
 from .jobs import queue_analysis_job, update_analysis_progress, run_analysis_job
-from .routes import recruiter, agents, interviews, trending_skills, analytics
+from .routes import recruiter, agents, interviews, trending_skills, jobs, payments, referrals, job_agents, resume_architect, training, scraping, fine_tuning, orchestrator
+from .routes.tailor_agent_routes import router as tailor_router
+from .routes import recruiter_marketplace
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] %(name)s - %(levelname)s - %(message)s",
-)
+# Configure structured JSON logging with correlation IDs
+import contextvars
+
+_correlation_id: contextvars.ContextVar[str] = contextvars.ContextVar("correlation_id", default="-")
+
+
+class JSONFormatter(logging.Formatter):
+    """Structured JSON log formatter with correlation ID."""
+    def format(self, record):
+        log_entry = {
+            "ts": self.formatTime(record),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+            "correlation_id": _correlation_id.get("-"),
+        }
+        if record.exc_info and record.exc_info[0]:
+            log_entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_entry)
+
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(JSONFormatter())
+logging.root.handlers = [_handler]
+logging.root.setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -111,10 +140,21 @@ async def lifespan(app: FastAPI):
             print("[STARTUP] [WARN] DATABASE_URL not configured - skipping table creation")
     except Exception as e:
         print(f"[STARTUP] [ERROR] Error creating tables: {e}")
+
+    # Connect Redis cache (graceful degradation if Redis is down)
+    await analysis_cache.connect()
+    print("[STARTUP] [OK] Redis analysis cache connected" if analysis_cache.is_available else "[STARTUP] [WARN] Redis unavailable — caching disabled")
+
+    # Start fine-tuning scheduler (checks every 6h, auto-triggers when ready)
+    import asyncio
+    from backend.services.fine_tuning_scheduler import run_fine_tuning_scheduler
+    asyncio.create_task(run_fine_tuning_scheduler())
+    print("[STARTUP] [OK] Fine-tuning scheduler started")
     
     yield  # App runs here
     
     # Shutdown
+    await analysis_cache.disconnect()
     print("[SHUTDOWN] Closing database connections...")
 
 app = FastAPI(
@@ -123,6 +163,21 @@ app = FastAPI(
     version="2.0.0",  # v2 = with auth & async
     lifespan=lifespan,
 )
+
+# =============================================================================
+# Rate Limiting (slowapi) — DDoS guard + Gemini cost control
+# =============================================================================
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded. Please try again shortly."},
+    )
+
 
 # CORS: Allow frontend dev server + localhost variants
 ALLOWED_ORIGINS = os.getenv(
@@ -137,6 +192,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*", "Authorization"],  # Explicitly allow Authorization header
 )
+
+# GZip compression for responses > 500 bytes
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
+
+# Security headers + correlation ID middleware
+@app.middleware("http")
+async def security_and_correlation_middleware(request: Request, call_next):
+    # Set correlation ID for structured logging
+    cid = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    _correlation_id.set(cid)
+
+    response = await call_next(request)
+
+    # Security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if os.getenv("ENABLE_HSTS", "false").lower() == "true":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["X-Correlation-ID"] = cid
+    return response
 
 # ============================================================================
 # Static File Serving (for charts and assets)
@@ -166,13 +245,24 @@ CHARTS_DIR.mkdir(parents=True, exist_ok=True)
 # ============================================================================
 # Mount API Routers
 # ============================================================================
-from backend.routes import agents
+# from backend.routes.tailor_agent_routes import router as tailor_router  # ✅ ACTIVATED — mounted below
 
 app.include_router(recruiter.router)
 app.include_router(agents.router)
 app.include_router(interviews.router)
 app.include_router(trending_skills.router)
-app.include_router(analytics.router)
+app.include_router(jobs.router)
+app.include_router(payments.router)  # Phase 7: Stripe payments
+app.include_router(referrals.router)  # Phase 7: Referral program
+app.include_router(job_agents.router)       # Phase 8: Autonomous Job Agents
+app.include_router(resume_architect.router) # Phase 8: Resume Architect
+app.include_router(training.router)         # Phase 9: Agent Training Pipeline
+app.include_router(scraping.router)         # Phase 9: Multi-Source Job Scraping
+app.include_router(fine_tuning.router)      # Phase 10: Fine-Tuning Pipeline
+app.include_router(orchestrator.router)     # Phase 11: Master Orchestrator
+app.include_router(tailor_router)           # $29 Tailor Rewrite Agent
+app.include_router(recruiter_marketplace.router)  # B2B Recruiter Marketplace
+# # # app.include_router(analytics.router)
 
 
 # =============================================================================
@@ -187,6 +277,31 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "IntelliResume AI", "version": "2.0.0"}
+
+
+@app.get("/health/live")
+async def health_liveness():
+    """Kubernetes liveness probe — is the process alive?"""
+    return {"status": "alive"}
+
+
+@app.get("/health/ready")
+async def health_readiness():
+    """Kubernetes readiness probe — can we serve traffic?"""
+    checks = {"database": False, "cache": False}
+    try:
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import text as sa_text
+            await db.execute(sa_text("SELECT 1"))
+            checks["database"] = True
+    except Exception:
+        pass
+    checks["cache"] = analysis_cache.is_available
+    all_ok = all(checks.values())
+    return JSONResponse(
+        status_code=200 if all_ok else 503,
+        content={"status": "ready" if all_ok else "degraded", "checks": checks},
+    )
 
 
 # =============================================================================
@@ -216,13 +331,123 @@ async def me(user: User = Depends(get_current_user)):
 
 
 # =============================================================================
+# User Score History (for Dashboard chart)
+# =============================================================================
+
+@app.get("/api/me/score-history")
+async def get_score_history(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get user's ATS score history for the dashboard line chart.
+    Returns the last 20 completed analyses with scores and dates.
+    """
+    from sqlalchemy import desc
+
+    stmt = (
+        select(
+            AnalysisResult.session_id,
+            AnalysisResult.final_ats_score,
+            AnalysisResult.created_at,
+        )
+        .where(
+            (AnalysisResult.user_id == user.id)
+            & (AnalysisResult.status == AnalysisStatus.completed)
+            & (AnalysisResult.final_ats_score.isnot(None))
+        )
+        .order_by(desc(AnalysisResult.created_at))
+        .limit(20)
+    )
+    rows = await db.execute(stmt)
+    history = [
+        {
+            "session_id": str(r.session_id),
+            "score": r.final_ats_score,
+            "date": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows.fetchall()
+    ]
+    # Reverse so oldest first (for chart)
+    history.reverse()
+
+    scores = [h["score"] for h in history if h["score"] is not None]
+    return {
+        "history": history,
+        "total_scans": len(history),
+        "average_score": round(sum(scores) / len(scores), 1) if scores else 0,
+        "best_score": max(scores) if scores else 0,
+        "latest_score": scores[-1] if scores else 0,
+    }
+
+
+# =============================================================================
+# 7-Day Pro Trial
+# =============================================================================
+
+STRIPE_PRO_MONTHLY_PRICE_ID = os.getenv("STRIPE_PRO_MONTHLY_PRICE_ID", "")
+
+
+@app.post("/api/trial/start")
+async def start_pro_trial(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Start a 7-day Pro trial.  Creates a Stripe Subscription with
+    trial_period_days=7 so the card isn't charged until day 8.
+    """
+    if user.tier != UserTier.free:
+        raise HTTPException(status_code=400, detail="Only free-tier users can start a trial.")
+    if user.trial_ends_at is not None:
+        raise HTTPException(status_code=400, detail="You have already used your free trial.")
+    if not STRIPE_PRO_MONTHLY_PRICE_ID:
+        raise HTTPException(status_code=503, detail="Trial pricing not configured.")
+
+    # Ensure Stripe customer exists
+    if not user.stripe_customer_id:
+        customer = stripe.Customer.create(
+            email=user.email,
+            metadata={"user_id": str(user.id)},
+        )
+        user.stripe_customer_id = customer.id
+        await db.commit()
+
+    FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    session = stripe.checkout.Session.create(
+        customer=user.stripe_customer_id,
+        payment_method_types=["card"],
+        line_items=[{"price": STRIPE_PRO_MONTHLY_PRICE_ID, "quantity": 1}],
+        mode="subscription",
+        subscription_data={
+            "trial_period_days": 7,
+            "metadata": {"user_id": str(user.id), "tier": "pro"},
+        },
+        success_url=f"{FRONTEND_URL}/?upgrade=success&trial=true",
+        cancel_url=f"{FRONTEND_URL}/pricing?trial=canceled",
+        metadata={"user_id": str(user.id), "trial": "true"},
+    )
+
+    # Mark trial started (webhook will set tier=pro on subscription.created)
+    user.trial_ends_at = datetime.utcnow() + timedelta(days=7)
+    user.subscription_status = SubscriptionStatus.trialing
+    await db.commit()
+
+    logger.info(f"[TRIAL] 7-day Pro trial started for {user.email}")
+    return {"checkout_url": session.url, "trial_ends_at": user.trial_ends_at.isoformat()}
+
+
+# =============================================================================
 # Legacy Quick-Scan (No Auth)
 # =============================================================================
 
 @app.post("/api/scan")
+@limiter.limit("5/minute")
 async def scan_resume(
+    request: Request,
     resume: UploadFile = File(...),
     job_description: str = Form(...),
+    user: User = Depends(get_current_user),
 ):
     """
     [LEGACY] Quick Gemini scan (no auth required, free but limited).
@@ -243,12 +468,14 @@ async def scan_resume(
 
     return analysis_result
 
-
 @app.post("/api/optimize")
+@limiter.limit("5/minute")
 async def optimize(
+    request: Request,
     resume: UploadFile = File(...),
     job_description: Optional[UploadFile] = File(None),
     jd_text: Optional[str] = Form(None),
+    user: User = Depends(get_current_user),
 ) -> FullOptimizationResult:
     """
     Upload resume (required) and job description (file or text). Returns optimized resume,
@@ -293,7 +520,6 @@ async def optimize(
     for name, abs_path in chart_paths.items():
         rel = Path(abs_path).name
         chart_urls[name] = f"/api/charts/{session_id}/{rel}"
-        _chart_paths[chart_urls[name]] = abs_path
 
     # 7) Optional writing feedback
     feedback: Optional[WritingFeedback] = await writing_feedback.get_writing_feedback(optimized_text)
@@ -440,13 +666,15 @@ async def preview_docx(optimized_resume: str = Form(...)):
 
 
 @app.post("/api/analyze/comprehensive", status_code=status.HTTP_202_ACCEPTED, response_model=AsyncScanAccepted)
+@limiter.limit("10/minute")
 async def analyze_comprehensive_async(
+    request: Request,
     resume: UploadFile = File(...),
     job_description: Optional[UploadFile] = File(None),
     jd_text: Optional[str] = Form(None),
     timezone: str = Form("UTC"),
     background_tasks: BackgroundTasks = BackgroundTasks(),
-    user: User = Depends(get_current_user),
+    user: User = Depends(check_scan_quota),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -505,6 +733,36 @@ async def analyze_comprehensive_async(
             poll_url=f"/api/analysis/{existing.session_id}/status",
         )
 
+    # ── Redis cache check (cross-user, content-based) ──────────────
+    # Different from DB idempotency above (which is per-user, 24 h).
+    # Redis cache is content-addressed: same resume+JD from ANY user
+    # returns instantly, saving Gemini API cost.
+    redis_cached = await analysis_cache.get(resume_text, jd)
+    if redis_cached:
+        logger.info(f"[CACHE] Returning Redis-cached result for user {user.id}")
+        session_id = str(uuid.uuid4())
+        analysis_record = AnalysisResult(
+            session_id=session_id,
+            user_id=user.id,
+            resume_filename=resume_filename,
+            resume_text_hash=resume_text_hash,
+            jd_text_hash=jd_text_hash,
+            user_timezone=timezone,
+            status=AnalysisStatus.completed,
+            current_step=8,
+            progress_percent=100,
+            step_message="Analysis complete (cached)",
+            result_json=redis_cached,
+        )
+        db.add(analysis_record)
+        user.scans_this_month += 1
+        await db.commit()
+        return AsyncScanAccepted(
+            session_id=session_id,
+            status=AnalysisStatus.completed,
+            poll_url=f"/api/analysis/{session_id}/status",
+        )
+
     # Create NEW AnalysisResult record (status=pending)
     session_id = str(uuid.uuid4())
     analysis_record = AnalysisResult(
@@ -544,6 +802,19 @@ async def analyze_comprehensive_async(
                 jd_text=jd
             )
             logger.info(f"[BACKGROUND] Analysis completed for session {session_id}")
+
+            # ── Store result in Redis cache for future requests ───
+            try:
+                async with AsyncSessionLocal() as cache_db:
+                    cache_stmt = select(AnalysisResult).where(
+                        AnalysisResult.session_id == session_id
+                    )
+                    cache_res = await cache_db.execute(cache_stmt)
+                    completed = cache_res.scalars().first()
+                    if completed and completed.result_json:
+                        await analysis_cache.set(resume_text, jd, completed.result_json)
+            except Exception as cache_err:
+                logger.warning(f"[CACHE] Failed to store result: {cache_err}")
         except Exception as job_error:
             logger.error(f"[BACKGROUND] Analysis failed for {session_id}: {job_error}", exc_info=True)
             # Update status to failed
@@ -717,10 +988,10 @@ async def get_analysis_status(
                         optimized_resume=optimized_preview,  # Show preview (first 500 chars)
                         ats_score=full_result.ats_score,  # Show full ATS score
                         jd_analysis=full_result.jd_analysis,  # Show JD analysis (all skills/tools visible)
-                        skill_gap=full_result.skill_gap,  # Show skill gap to drive upgrade
-                        resume_quality=full_result.resume_quality,  # Show quality score to drive upgrade
+                        skill_gap=None,  # Gated: skill gap is Pro-only
+                        resume_quality=None,  # Gated: quality score is Pro-only
                         keyword_heatmap=free_keywords,  # Show only 3 free keywords
-                        writing_feedback=full_result.writing_feedback,  # Show writing feedback
+                        writing_feedback=None,  # Gated: writing feedback is Pro-only
                         chart_paths={},  # No charts for free
                         is_free_tier_preview=True,  # Flag for frontend
                     )

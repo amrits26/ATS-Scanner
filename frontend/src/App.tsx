@@ -1,5 +1,5 @@
 import { useCallback, useState, useEffect } from "react";
-import { Target, BarChart3, Zap, Activity, ShieldCheck, TrendingUp, AlertCircle, CheckCircle2, Lock } from 'lucide-react';
+import { Target, BarChart3, Zap, Activity, ShieldCheck, TrendingUp, AlertCircle, CheckCircle2, Lock, ExternalLink } from 'lucide-react';
 import type { ComprehensiveAnalysisResult, UserTierEnum } from "./types";
 import { ResumeComparison } from "./ResomeComparison";
 import { AuthModal } from "./components/AuthModal";
@@ -8,6 +8,8 @@ import { EnhancedLiveKeywordWidget } from "./components/EnhancedLiveKeywordWidge
 import { CredibilityCard } from "./components/CredibilityCard";
 import { FeedbackModal } from "./components/FeedbackModal";
 import UpgradeModal from "./components/UpgradeModalComponent";
+import { TailorRewriteModal } from "./components/TailorRewriteModal";
+import { InterviewPrepWidget } from "./components/InterviewPrepWidget";
 import { initSupabaseClient } from "./lib/supabase";
 
 const API_BASE = "";
@@ -66,11 +68,11 @@ async function getAuthToken(): Promise<string | null> {
     const cachedToken = localStorage.getItem("auth_token");
     if (cachedToken) return cachedToken;
 
-    // Final fallback: demo token for development
-    return "demo-token-123";
+    // No session found
+    return null;
   } catch (err) {
     console.warn("Failed to get auth token:", err);
-    return localStorage.getItem("auth_token") || "demo-token-123";
+    return localStorage.getItem("auth_token") || null;
   }
 }
 
@@ -87,10 +89,10 @@ async function authenticatedFetch(
 ): Promise<Response> {
   const token = await getAuthToken();
   
-  // Always use the token (will be demo token as fallback)
-  const headers: Record<string, string> = {
-    'Authorization': `Bearer ${token || "demo-token-123"}`,
-  };
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
   
   // Only set Content-Type for JSON requests when NOT sending FormData
   // If body is FormData, let the browser set multipart/form-data boundary automatically
@@ -243,6 +245,7 @@ function App() {
   const [jdDrag, setJdDrag] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showTailorModal, setShowTailorModal] = useState(false);
 
   // ========================================================================
   // Effects
@@ -325,13 +328,14 @@ function App() {
   // Session recovery from localStorage with validation
   useEffect(() => {
     const savedSessionId = localStorage.getItem("active_session_id");
-    if (savedSessionId && !result && isManualStart) {
-      // Only restore session if user explicitly started an analysis in this session
+    if (savedSessionId && !result) {
+      // Restore persisted analysis session from localStorage
+      // This allows users to refresh the page and still see their results
       setSessionId(savedSessionId);
       // Defer loading state to allow useEffect dependencies to stabilize
       setTimeout(() => setLoading(true), 0);
     }
-  }, [result, isManualStart]);
+  }, [result]);
 
   // Handle Stripe payment success redirect
   useEffect(() => {
@@ -344,7 +348,11 @@ function App() {
       // Refresh user tier data
       const refreshUserTier = async () => {
         try {
-          const token = localStorage.getItem("jwt_token") || "demo-token-123";
+          const token = localStorage.getItem("jwt_token");
+          if (!token) {
+            console.error("[PAYMENT] No auth token found");
+            return;
+          }
           const res = await fetch(`${API_BASE}/api/me`, {
             headers: {
               'Authorization': `Bearer ${token}`,
@@ -420,8 +428,23 @@ function App() {
           localStorage.removeItem("active_session_id");
           setCurrentStep(ANALYSIS_STEPS.length);
           
+          // Persist resume text for InterviewPrepWidget
+          if (data.result?.original_resume) {
+            localStorage.setItem('current_resume', data.result.original_resume);
+          }
+          // Store last heatmap path for dashboard
+          if (data.result?.chart_paths?.keyword_heatmap) {
+            localStorage.setItem('last_heatmap_path', data.result.chart_paths.keyword_heatmap);
+          }
+          
           // Phase 3: Show feedback modal on completion
           setTimeout(() => setShowFeedbackModal(true), 1000);
+          
+          // Show Tailor modal for improvable scores (50-80)
+          const score = data.result?.ats_score?.final_ats_score ?? 0;
+          if (score >= 50 && score <= 80) {
+            setTimeout(() => setShowTailorModal(true), 3000);
+          }
         } else if (data.status === "failed") {
           console.error("[DEBUG] Analysis failed:", data.error_message);
           setError(data.error_message || "Analysis failed. Please try again.");
@@ -699,6 +722,12 @@ function App() {
                 💰 Pricing
               </a>
               <a
+                href="/dashboard"
+                className="px-4 py-2 rounded-lg bg-slate-700/50 hover:bg-slate-600/50 text-slate-200 text-sm font-semibold border border-slate-600/30 transition-all"
+              >
+                📊 My Dashboard
+              </a>
+              <a
                 href="/recruiter"
                 className="px-4 py-2 rounded-lg bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 text-sm font-semibold border border-purple-500/30 transition-all"
               >
@@ -882,19 +911,30 @@ function App() {
                 <ScoreCard label="Quality" score={result?.resume_quality?.overall_score ?? 0} icon="⭐" locked={user?.tier !== "pro"} />
               </div>
 
-              <button
-                onClick={downloadDocx}
-                disabled={user?.tier !== "pro"}
-                title={user?.tier !== "pro" ? "Upgrade to Pro to download" : "Download optimized resume"}
-                className={`w-full rounded-lg px-6 py-3 font-semibold transition-all mb-6 flex items-center justify-center gap-2 ${
-                  user?.tier === "pro"
-                    ? "bg-gradient-to-r from-emerald-600 to-cyan-600 text-white hover:shadow-lg hover:shadow-emerald-500/20"
-                    : "bg-slate-700/50 text-slate-400 cursor-not-allowed opacity-60"
-                }`}
-              >
-                ⬇️ Download Optimized Resume (DOCX)
-                {user?.tier !== "pro" && <span className="text-lg">🔒</span>}
-              </button>
+              <div className="flex gap-3 mb-6">
+                <button
+                  onClick={downloadDocx}
+                  disabled={user?.tier !== "pro"}
+                  title={user?.tier !== "pro" ? "Upgrade to Pro to download" : "Download optimized resume"}
+                  className={`flex-1 rounded-lg px-6 py-3 font-semibold transition-all flex items-center justify-center gap-2 ${
+                    user?.tier === "pro"
+                      ? "bg-gradient-to-r from-emerald-600 to-cyan-600 text-white hover:shadow-lg hover:shadow-emerald-500/20"
+                      : "bg-slate-700/50 text-slate-400 cursor-not-allowed opacity-60"
+                  }`}
+                >
+                  ⬇️ Download Optimized Resume (DOCX)
+                  {user?.tier !== "pro" && <span className="text-lg">🔒</span>}
+                </button>
+                {(result?.ats_score?.final_ats_score ?? 0) >= 50 && (result?.ats_score?.final_ats_score ?? 0) <= 80 && (
+                  <button
+                    onClick={() => setShowTailorModal(true)}
+                    className="rounded-lg px-6 py-3 font-semibold transition-all bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800 hover:shadow-lg hover:shadow-blue-500/20 flex items-center gap-2"
+                  >
+                    🚀 Tailor for This Job — $29
+                  </button>
+                )}
+                <InterviewPrepWidget />
+              </div>
 
               {/* ============= CREDIBILITY LAYER (Phase 6) ============= */}
               <CredibilityCard atsScoreData={result?.ats_score || {}} />
@@ -1028,6 +1068,37 @@ function App() {
                     </div>
                   )}
                 </div>
+
+                {/* Missing Keywords Section */}
+                {result?.ats_score?.missing_keywords && result.ats_score.missing_keywords.length > 0 && (
+                  <div className="glass-card p-6">
+                    <h3 className="mb-4 font-semibold text-amber-400 flex items-center gap-2">
+                      ⚠️ Missing Keywords ({result.ats_score.missing_keywords.length})
+                    </h3>
+                    <p className="text-sm text-slate-400 mb-4">These keywords from the job description are missing from your resume. Adding them could significantly improve your ATS score.</p>
+                    <div className="flex flex-wrap gap-2">
+                      {(user?.tier === "pro" ? result.ats_score.missing_keywords : result.ats_score.missing_keywords.slice(0, 3)).map((keyword) => (
+                        <span
+                          key={keyword}
+                          title="Add this keyword to your resume to improve your ATS score"
+                          className="inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 transition-colors cursor-default"
+                        >
+                          {keyword}
+                        </span>
+                      ))}
+                    </div>
+                    {user?.tier !== "pro" && result.ats_score.missing_keywords.length > 3 && (
+                      <div className="mt-3 text-center">
+                        <button
+                          onClick={() => setShowUpgradeModal(true)}
+                          className="text-sm text-amber-400 hover:text-amber-300 font-medium"
+                        >
+                          🔒 + {result.ats_score.missing_keywords.length - 3} more — Upgrade to see all
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1108,7 +1179,18 @@ function App() {
                     <div className="flex flex-wrap gap-2">
                       {result?.skill_gap?.missing_skills && result?.skill_gap?.missing_skills.length > 0 ? (
                         result?.skill_gap?.missing_skills?.slice(0, 20).map((skill) => (
-                          <Tag key={skill} text={skill} variant="warning" locked={user?.tier !== "pro"} />
+                          <a
+                            key={skill}
+                            href={`https://www.udemy.com/courses/search/?src=ukw&q=${encodeURIComponent(skill)}`}
+                            target="_blank"
+                            rel="sponsored noopener"
+                            onClick={() => trackAffiliateClick(`SkillGap:${skill}`, result?.ats_score?.final_ats_score ?? 0)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30 hover:text-red-200 transition-colors"
+                            title={`Learn ${skill} — close this gap`}
+                          >
+                            {skill}
+                            <ExternalLink size={12} className="opacity-60" />
+                          </a>
                         ))
                       ) : (
                         <p className="text-sm text-slate-500">Great! No missing critical skills</p>
@@ -1206,6 +1288,31 @@ function App() {
                         ))}
                       </div>
                     </div>
+                    {/* Missing Keywords */}
+                    {result?.ats_score?.missing_keywords && result.ats_score.missing_keywords.length > 0 && (
+                      <div>
+                        <h4 className="text-sm font-medium text-red-400 mb-3">Missing from Your Resume ({result.ats_score.missing_keywords.length})</h4>
+                        <div className="flex flex-wrap gap-2">
+                          {(user?.tier === "pro" ? result.ats_score.missing_keywords : result.ats_score.missing_keywords.slice(0, 3)).map((k) => (
+                            <span
+                              key={k}
+                              title="Add this keyword to your resume to improve your ATS score"
+                              className="inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium bg-red-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30 transition-colors cursor-default"
+                            >
+                              {k}
+                            </span>
+                          ))}
+                        </div>
+                        {user?.tier !== "pro" && result.ats_score.missing_keywords.length > 3 && (
+                          <button
+                            onClick={() => setShowUpgradeModal(true)}
+                            className="mt-2 text-sm text-amber-400 hover:text-amber-300 font-medium"
+                          >
+                            🔒 + {result.ats_score.missing_keywords.length - 3} more — Upgrade to see all
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="glass-card p-6">
@@ -1244,6 +1351,16 @@ function App() {
 
       {/* Upgrade Modal */}
       <UpgradeModal isOpen={showUpgradeModal} onClose={() => setShowUpgradeModal(false)} />
+
+      {/* Tailor Rewrite Modal ($29 upsell) */}
+      <TailorRewriteModal
+        isOpen={showTailorModal}
+        onClose={() => setShowTailorModal(false)}
+        resumeText={result?.original_resume || ''}
+        atsScore={result?.ats_score?.final_ats_score ?? 0}
+        jobDescription={jdText}
+        userEmail={user?.email || ''}
+      />
 
       {/* Phase 3: Feedback Modal */}
       {sessionId && (

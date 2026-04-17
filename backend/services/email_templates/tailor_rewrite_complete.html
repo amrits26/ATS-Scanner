@@ -1,0 +1,302 @@
+<!-- tailor_rewrite_complete.html
+     Email sent when Tailor Agent rewrite is complete and ready for download.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your AI-Tailored Resume is Ready</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+            background-color: #f5f7fa;
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 30px 20px;
+            text-align: center;
+            color: #ffffff;
+        }
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        .content {
+            padding: 30px 20px;
+        }
+        .greeting {
+            font-size: 16px;
+            color: #2d3748;
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }
+        .score-box {
+            background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            margin: 25px 0;
+            border-radius: 8px;
+        }
+        .score-box h3 {
+            font-size: 14px;
+            color: #667eea;
+            font-weight: 600;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .score-comparison {
+            display: flex;
+            align-items: center;
+            justify-content: space-around;
+            margin: 15px 0;
+        }
+        .score-item {
+            text-align: center;
+        }
+        .score-number {
+            font-size: 32px;
+            font-weight: 700;
+            color: #2d3748;
+            margin-bottom: 5px;
+        }
+        .score-label {
+            font-size: 12px;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .arrow {
+            font-size: 24px;
+            color: #667eea;
+            font-weight: 700;
+        }
+        .improvement {
+            font-size: 18px;
+            font-weight: 700;
+            color: #48bb78;
+            text-align: center;
+            margin-top: 15px;
+        }
+        .cta-button {
+            display: inline-block;
+            width: 100%;
+            padding: 15px 20px;
+            margin: 25px 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #ffffff;
+            text-decoration: none;
+            text-align: center;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 16px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .cta-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 12px rgba(102, 126, 234, 0.3);
+        }
+        .benefits {
+            background-color: #f7fafc;
+            padding: 20px;
+            margin: 25px 0;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
+        .benefits h3 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 15px;
+        }
+        .benefit-item {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 12px;
+            font-size: 14px;
+            color: #4a5568;
+            line-height: 1.5;
+        }
+        .benefit-icon {
+            color: #48bb78;
+            font-weight: 700;
+            margin-right: 10px;
+            min-width: 20px;
+        }
+        .footer-section {
+            background-color: #f7fafc;
+            padding: 20px;
+            margin-top: 30px;
+            border-top: 1px solid #e2e8f0;
+            font-size: 13px;
+            color: #718096;
+            line-height: 1.6;
+        }
+        .footer-section h4 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 10px;
+        }
+        .footer {
+            background-color: #2d3748;
+            color: #a0aec0;
+            text-align: center;
+            padding: 20px;
+            font-size: 12px;
+            border-top: 1px solid #1a202c;
+        }
+        .footer a {
+            color: #667eea;
+            text-decoration: none;
+        }
+        .footer a:hover {
+            text-decoration: underline;
+        }
+        .highlight {
+            color: #667eea;
+            font-weight: 600;
+        }
+        @media (max-width: 600px) {
+            .container {
+                margin: 0;
+                border-radius: 0;
+            }
+            .header {
+                padding: 20px 15px;
+            }
+            .header h1 {
+                font-size: 24px;
+            }
+            .content {
+                padding: 20px 15px;
+            }
+            .score-comparison {
+                flex-direction: column;
+                gap: 15px;
+            }
+            .arrow {
+                font-size: 20px;
+                transform: rotate(90deg);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>✨ Your Resume is Ready!</h1>
+            <p>AI-tailored for maximum ATS impact</p>
+        </div>
+
+        <!-- Main Content -->
+        <div class="content">
+            <p class="greeting">
+               Hi {{first_name || 'there'}},
+                <br><br>
+                Congratulations! Your resume has been successfully tailored for the <span class="highlight">{{job_title}}</span> position. Our AI optimized every section to maximize your ATS score and improve your chances of getting an interview.
+            </p>
+
+            <!-- Score Improvement -->
+            <div class="score-box">
+                <h3>📊 Your ATS Score Improvement</h3>
+                <div class="score-comparison">
+                    <div class="score-item">
+                        <div class="score-number">{{before_score}}</div>
+                        <div class="score-label">Before</div>
+                    </div>
+                    <div class="arrow">→</div>
+                    <div class="score-item">
+                        <div class="score-number">{{after_score}}</div>
+                        <div class="score-label">After</div>
+                    </div>
+                </div>
+                <div class="improvement">
+                    +{{score_improvement}} Point Boost 🚀
+                </div>
+            </div>
+
+            <!-- CTA Button -->
+            <a href="{{download_url}}" class="cta-button" style="margin: 25px 0;">
+                📥 Download Your Resume (DOCX)
+            </a>
+
+            <!-- What Changed -->
+            <div class="benefits">
+                <h3>✨ Key Improvements Made</h3>
+                <div class="benefit-item">
+                    <div class="benefit-icon">✓</div>
+                    <div>Reordered bullets to highlight matching skills first</div>
+                </div>
+                <div class="benefit-item">
+                    <div class="benefit-icon">✓</div>
+                    <div>Integrated target job keywords naturally into your experience</div>
+                </div>
+                <div class="benefit-item">
+                    <div class="benefit-icon">✓</div>
+                    <div>Added quantifiable metrics (%, $, #) to core achievements</div>
+                </div>
+                <div class="benefit-item">
+                    <div class="benefit-icon">✓</div>
+                    <div>Enhanced summary to focus on relevant experience</div>
+                </div>
+                <div class="benefit-item">
+                    <div class="benefit-icon">✓</div>
+                    <div>Optimized for modern ATS systems and human recruiters</div>
+                </div>
+            </div>
+
+            <!-- How to Use -->
+            <div class="footer-section">
+                <h4>🎯 Next Steps</h4>
+                <p>
+                    1. <strong>Download</strong> your resume from the link above (DOCX format)<br>
+                    2. <strong>Review</strong> the changes made—all modifications are highlighted<br>
+                    3. <strong>Apply</strong> to the job using your new tailored resume<br>
+                    4. <strong>Track</strong> your applications to see which version gets more interviews
+                </p>
+            </div>
+
+            <!-- Important Notes -->
+            <div class="footer-section">
+                <h4>⏰ Important Details</h4>
+                <p>
+                    <strong>Download expires in 7 days.</strong> Make sure to download your resume soon.<br><br>
+                    This tailored resume is specifically optimized for the job description you provided. For other roles, you can generate a new tailor using our platform.
+                </p>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p>
+                Questions? <a href="https://support.ats-scanner.com">Contact our support team</a>
+                <br><br>
+                © 2026 ATS-Scanner. All rights reserved. | <a href="https://ats-scanner.com/terms">Terms</a> | <a href="https://ats-scanner.com/privacy">Privacy</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>

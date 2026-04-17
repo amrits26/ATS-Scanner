@@ -329,18 +329,21 @@ async def send_fear_email(
     Body: Show score, top missing keywords, and 24h promo code
     """
     
-    # TODO: Replace with actual Resend SDK integration
-    # For now, just log
-    logger.info(f"MOCK: Sending fear email to {email} with code {promo_code}")
-    
-    # Real implementation:
-    # from resend import Resend
-    # from backend.services.email_service import send_fear_email as real_send
-    # await real_send(
-    #     email=email,
-    #     score=score,
-    #     promo_code=promo_code
-    # )
+    from backend.services.email_service import send_fear_email as _send_fear_email
+    try:
+        result = await _send_fear_email(
+            db=None,
+            user_id="free_scan",
+            email=email,
+            ats_score=float(score),
+            full_name=email.split("@")[0],
+        )
+        if result:
+            logger.info(f"Fear email sent to {email} with code {promo_code}")
+        else:
+            logger.warning(f"Fear email failed for {email} — check RESEND_API_KEY")
+    except Exception as e:
+        logger.error(f"Fear email error for {email}: {e}")
 
 
 async def log_posthog_event(

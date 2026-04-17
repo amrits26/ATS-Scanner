@@ -15,7 +15,7 @@ from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_db
-from .db_models import User, UserTier
+from .db_models import User, UserTier, RecruiterAccount
 
 
 # =============================================================================
@@ -29,13 +29,13 @@ if not SUPABASE_JWT_SECRET:
         "Set it in your .env file from Supabase → Settings → API → JWT Settings."
     )
 
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+
 JWT_ALGORITHMS = ["HS256"]
 
 # Pro testing mode: emails that automatically get PRO tier
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "demo@intelliresume.ai")
-
-# Pro testing mode: emails that automatically get PRO tier
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "demo@intelliresume.ai")
+# No default — must be explicitly set in .env for production safety
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL")
 
 
 # =============================================================================
@@ -80,51 +80,14 @@ async def get_current_user(
 
     token = parts[1]
 
-    # =========================================================================
-    # DEMO MODE: Bypass JWT verification for demo token
-    # =========================================================================
-    if token == "demo-token-123":
-        print("[AUTH] Demo mode activated - using hardcoded demo user")
-        # Lookup or create demo user in DB
-        from sqlalchemy import select
-        demo_supabase_id = "demo-user-123"
-        demo_email = "demo@intelliresume.ai"
-        
-        stmt = select(User).where(User.supabase_user_id == demo_supabase_id)
-        result = await db.execute(stmt)
-        user = result.scalars().first()
-        
-        if not user:
-            print("[AUTH] Creating demo user in database...")
-            user = User(
-                supabase_user_id=demo_supabase_id,
-                email=demo_email,
-                full_name="Demo User",
-                tier=UserTier.pro,  # Demo user is PRO for testing
-            )
-            db.add(user)
-            await db.flush()
-            await db.commit()
-            print("[AUTH] Demo user created with PRO tier")
-        else:
-            # Ensure demo user has PRO tier
-            if user.tier != UserTier.pro:
-                user.tier = UserTier.pro
-                await db.commit()
-                print("[AUTH] Demo user upgraded to PRO tier")
-        
-        print(f"[AUTH] Demo user logged in: {user.email} (tier={user.tier})")
-        return user
-
-    # =========================================================================
-    # REAL MODE: Verify JWT token
-    # =========================================================================
     # Decode and verify JWT
     try:
         payload = jwt.decode(
             token,
             SUPABASE_JWT_SECRET,
             algorithms=JWT_ALGORITHMS,
+            audience="authenticated",
+            issuer=SUPABASE_URL or None,
         )
     except jwt.ExpiredSignatureError:
         raise HTTPException(
@@ -239,3 +202,72 @@ async def check_scan_quota(user: User = Depends(require_auth)) -> User:
             "Upgrade to PRO for unlimited scans.",
         )
     return user
+
+
+# =============================================================================
+# Recruiter Authentication
+# =============================================================================
+
+async def get_current_recruiter(
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
+) -> RecruiterAccount:
+    """
+    Validate JWT and return the corresponding RecruiterAccount.
+    Uses the same Supabase JWT infrastructure but looks up recruiter_accounts.
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Authorization header",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Authorization header format",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        payload = jwt.decode(
+            parts[1],
+            SUPABASE_JWT_SECRET,
+            algorithms=JWT_ALGORITHMS,
+            audience="authenticated",
+            issuer=SUPABASE_URL or None,
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+
+    supabase_user_id = payload.get("sub")
+    email = payload.get("email", "")
+    if not supabase_user_id:
+        raise HTTPException(status_code=401, detail="Token missing 'sub'")
+
+    from sqlalchemy import select
+
+    stmt = select(RecruiterAccount).where(RecruiterAccount.supabase_user_id == supabase_user_id)
+    result = await db.execute(stmt)
+    recruiter = result.scalars().first()
+
+    # Fallback: look up by email (for accounts created before Supabase link)
+    if not recruiter:
+        stmt = select(RecruiterAccount).where(RecruiterAccount.email == email)
+        result = await db.execute(stmt)
+        recruiter = result.scalars().first()
+        if recruiter and not recruiter.supabase_user_id:
+            recruiter.supabase_user_id = supabase_user_id
+            await db.flush()
+
+    if not recruiter:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No recruiter account found. Please sign up at /recruiter/signup.",
+        )
+
+    return recruiter
